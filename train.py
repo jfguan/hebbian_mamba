@@ -20,13 +20,29 @@ def cosine_lr(step, warmup, total, max_lr, min_lr):
     return min_lr + 0.5 * (max_lr - min_lr) * (1 + math.cos(math.pi * t))
 
 
+def configure_optimizers(model, lr, weight_decay):
+    """Separate weight decay for 2D params only (nanoGPT style)."""
+    decay_params = [p for p in model.parameters() if p.dim() >= 2]
+    nodecay_params = [p for p in model.parameters() if p.dim() < 2]
+    optim_groups = [
+        {"params": decay_params, "weight_decay": weight_decay},
+        {"params": nodecay_params, "weight_decay": 0.0},
+    ]
+    n_decay = sum(p.numel() for p in decay_params)
+    n_nodecay = sum(p.numel() for p in nodecay_params)
+    print(f"  decay params: {n_decay:,} | no-decay params: {n_nodecay:,}")
+    use_fused = "cuda" in str(next(model.parameters()).device)
+    return torch.optim.AdamW(optim_groups, lr=lr, betas=(0.9, 0.95), fused=use_fused)
+
+
 @torch.no_grad()
 def evaluate(model, loader, device, steps=10):
     model.eval()
     total = 0.0
     for _ in range(steps):
         x, y = loader.batch()
-        _, loss = model(x.to(device), y.to(device))
+        with torch.autocast(device_type=device.split(":")[0], dtype=torch.bfloat16):
+            _, loss = model(x.to(device), y.to(device))
         total += loss.item()
     model.train()
     return total / steps
@@ -80,6 +96,8 @@ def main():
     p.add_argument("--d-model", type=int, default=512)
     p.add_argument("--d-state", type=int, default=16)
     p.add_argument("--tag", type=str, default=None)
+    p.add_argument("--grad-accum", type=int, default=1)
+    p.add_argument("--compile", action="store_true")
     args = p.parse_args()
 
     use_memory = not args.no_memory
@@ -91,7 +109,11 @@ def main():
         if torch.cuda.is_available()
         else "cpu"
     )
+    device_type = device.split(":")[0]
     torch.manual_seed(42)
+    if device_type == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
     ds = load_dataset()
     train_loader = DataLoader(ds["train"], args.batch_size, args.seq_len)
@@ -101,14 +123,17 @@ def main():
     model = HebbianMamba(cfg).to(device)
     n_params = sum(p.numel() for p in model.parameters())
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=args.lr, weight_decay=0.1, betas=(0.9, 0.95)
-    )
+    if args.compile:
+        print("Compiling model...")
+        model = torch.compile(model)
+
+    optimizer = configure_optimizers(model, args.lr, weight_decay=0.1)
 
     start_step = 0
     if args.resume:
         ckpt = torch.load(args.resume, map_location=device, weights_only=False)
-        missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
+        raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model
+        missing, unexpected = raw_model.load_state_dict(ckpt["model"], strict=False)
         if missing:
             print(f"  New params (randomly initialized): {missing}")
         if unexpected:
@@ -121,11 +146,12 @@ def main():
     total_steps = start_step + args.steps
     min_lr = args.lr * 0.1
     T = args.seq_len
+    grad_accum = args.grad_accum
     print(
         f"{n_params / 1e6:.1f}M params | memory={use_memory} | {device}"
     )
     print(
-        f"Steps {start_step} -> {total_steps} | B={args.batch_size} T={T} lr={args.lr}"
+        f"Steps {start_step} -> {total_steps} | B={args.batch_size}x{grad_accum} T={T} lr={args.lr}"
     )
 
     log_path = f"history_{tag}.jsonl"
@@ -138,20 +164,24 @@ def main():
             for pg in optimizer.param_groups:
                 pg["lr"] = lr
 
-            x, y = train_loader.batch()
-            x, y = x.to(device), y.to(device)
-
-            _, loss = model(x, y)
-
             optimizer.zero_grad(set_to_none=True)
-            loss.backward()
+            loss_accum = 0.0
+            for micro in range(grad_accum):
+                x, y = train_loader.batch()
+                x, y = x.to(device), y.to(device)
+                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                    _, loss = model(x, y)
+                loss = loss / grad_accum
+                loss.backward()
+                loss_accum += loss.item()
+
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 
             dt = time.time() - t0
-            entry = {"step": step, "train_loss": loss.item()}
+            entry = {"step": step, "train_loss": loss_accum}
             print(
-                f"step {step:5d} | loss {loss.item():.4f} | ppl {math.exp(loss.item()):8.2f} | lr {lr:.2e} | {dt * 1000:.0f}ms",
+                f"step {step:5d} | loss {loss_accum:.4f} | ppl {math.exp(loss_accum):8.2f} | lr {lr:.2e} | {dt * 1000:.0f}ms",
                 flush=True,
             )
 
@@ -165,6 +195,7 @@ def main():
     except KeyboardInterrupt:
         print(f"\nStopped at step {step}.")
 
+    raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model
     vl = evaluate(model, val_loader, device)
     log_file.write(
         json.dumps({"step": step, "train_loss": entry["train_loss"], "val_loss": vl})
@@ -172,11 +203,11 @@ def main():
     )
     log_file.close()
     print(f"\nFinal val loss: {vl:.4f} | ppl {math.exp(vl):.2f}")
-    print(f"Sample:\n{sample(model, ds['decode'], device, 300)}")
+    print(f"Sample:\n{sample(raw_model, ds['decode'], device, 300)}")
 
     torch.save(
         {
-            "model": model.state_dict(),
+            "model": raw_model.state_dict(),
             "optimizer": optimizer.state_dict(),
             "config": cfg,
             "step": step + 1,
