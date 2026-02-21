@@ -49,10 +49,19 @@ def evaluate(model, loader, device, steps=10):
 
 
 @torch.no_grad()
-def sample(model, decode, device, n=200, temperature=0.8):
+def sample(model, encode, decode, device, prompt="", n=200, temperature=0.8):
     model.eval()
-    token = torch.zeros(1, dtype=torch.long, device=device)
     states, tokens = None, []
+    prompt_ids = encode(prompt) if prompt else [0]
+    # feed prompt tokens through model to build state
+    for tok_id in prompt_ids[:-1]:
+        token = torch.tensor([tok_id], dtype=torch.long, device=device)
+        _, states = model.step(token, states=states)
+        states = [
+            {k: v.detach() if isinstance(v, torch.Tensor) else v for k, v in s.items()}
+            for s in states
+        ]
+    token = torch.tensor([prompt_ids[-1]], dtype=torch.long, device=device)
     for _ in range(n):
         logits, states = model.step(token, states=states)
         states = [
@@ -64,7 +73,7 @@ def sample(model, decode, device, n=200, temperature=0.8):
         ).squeeze(-1)
         tokens.append(token.item())
     model.train()
-    return decode(tokens)
+    return prompt + decode(tokens)
 
 
 def plot_losses(history, tag):
@@ -223,7 +232,8 @@ def main():
     )
     log_file.close()
     print(f"\nFinal val loss: {vl:.4f} | ppl {math.exp(vl):.2f}")
-    print(f"Sample:\n{sample(raw_model, ds['decode'], device, 300)}")
+    prompt = "def fizzbuzz(n):\n" if args.dataset == "code" else ""
+    print(f"Sample:\n{sample(raw_model, ds['encode'], ds['decode'], device, prompt=prompt, n=300)}")
 
     torch.save(
         {

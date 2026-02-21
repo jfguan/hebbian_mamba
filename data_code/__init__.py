@@ -61,7 +61,7 @@ def load_dataset(vocab_size=512):
             train_data = np.load(TRAIN_TOKENS_PATH)
             val_data = np.load(VAL_TOKENS_PATH)
             print(f"  Train: {len(train_data):,} tokens | Val: {len(val_data):,} tokens")
-            return dict(train=train_data, val=val_data, vocab_size=vocab_size, decode=tok.decode)
+            return dict(train=train_data, val=val_data, vocab_size=vocab_size, encode=tok.encode, decode=tok.decode)
         print(f"  vocab_size mismatch ({tok.vocab_size} vs {vocab_size}), retraining...")
 
     print("Streaming StarCoderData Python (train)...")
@@ -87,4 +87,4 @@ def load_dataset(vocab_size=512):
     np.save(VAL_TOKENS_PATH, val_data)
 
     print(f"Cached token arrays to {DATA_DIR}")
-    return dict(train=train_data, val=val_data, vocab_size=vocab_size, decode=tok.decode)
+    return dict(train=train_data, val=val_data, vocab_size=vocab_size, encode=tok.encode, decode=tok.decode)

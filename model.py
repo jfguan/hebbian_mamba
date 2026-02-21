@@ -67,7 +67,10 @@ class HebbianMambaLayer(nn.Module):
             log_gamma_slow = torch.sigmoid(self.decay_slow).log()
             M_slow = torch.exp(diffs * log_gamma_slow) * causal
             reads = reads + torch.bmm(scores * M_slow, v)
-        return out + 0.03 * self.proj_read(reads).to(out.dtype)
+            alpha = 0.01
+        else:
+            alpha = 0.03
+        return out + alpha * self.proj_read(reads).to(out.dtype)
 
     def forward(self, x):
         residual = x
@@ -106,7 +109,8 @@ class HebbianMambaLayer(nn.Module):
             read = read + torch.einsum("bij,bj->bi", W_slow, out)
             W_slow = gamma_slow * W_slow + write
 
-        out = out + 0.03 * self.proj_read(read)
+        alpha = 0.01 if self.dual_memory else 0.03
+        out = out + alpha * self.proj_read(read)
 
         new_state = {"cache": cache, "memory": W, "r_prev": raw_out}
         if self.dual_memory:
