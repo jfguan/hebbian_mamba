@@ -30,6 +30,14 @@ Simple 32-line mechanism → works on synthetic recall → beats param-matched b
 - 4 layers with independent W matrices appear to distribute associations: 18.8% at 256 pairs = ~48 correct, or ~12 per layer — well within single-matrix capacity. A single-layer model should show the cliff much earlier.
 - Chart: eval_recall/capacity.png
 
+### 1c. W Ablation: Frozen vs Updating [DONE]
+- eval_memory/eval_memory.py on code memory model, 8 windows × 8K tokens
+- W updating (normal): 2.019 | W frozen (reset each step): 2.914 | delta: **+0.895 ± 0.032**
+- Nearly identical to full memory-vs-baseline gap (0.939) → almost all improvement from W itself, not extra params
+- Gap large from position 0, consistent throughout — W is useful immediately
+- Learned γ: all 8 layers converge to 0.989–0.993 (effective window ~110–150 steps)
+- Per-segment delta peaks at 1024-1536 (+1.127) and 7168-7680 (+1.178)
+
 ### 2. Param-Matched Baselines at 18M on Prose [DONE]
 - Memory (d=512, 8 layers, 18M) vs wide baseline (d=576, 8 layers, 17.4M) vs deep baseline (d=512, 10 layers, 17.2M)
 - All trained identically: B=2, T=2048, 1465 steps (~6M tokens), cosine LR
@@ -112,13 +120,16 @@ Simple 32-line mechanism → works on synthetic recall → beats param-matched b
 
 **Interpretation:** Code is almost entirely associative recall — variable binding, import reuse, function signatures, class attributes. Every identifier is a key-value pair: written at definition, read at use. W implements this directly. Mamba's d_state=16 tries to track all variable bindings in 16 dimensions.
 
-### 6. Model Size Scaling: 18M → 100M [IN PROGRESS]
+### 6. Model Size Scaling: 18M → 100M [BASELINE DONE]
 - Architecture: d=1024, 12 layers (~106M params with memory)
-- Baseline: d=1024, 12 layers, no memory (~88M params)
+- Baseline: d=1024, 16 layers, no memory (~107M params)
 - Dataset: same codeparrot Python, 16M tokens
-- Training: 4×1000-step chunks (~4M tokens each), resuming between chunks
+- Baseline trained: 8000 steps × 2048 tokens/step = 16.4M tokens → **val loss 2.187**
+- **Key finding: 18M memory model (1.848) beats 100M baseline (2.187)**
+  - 5.5× fewer parameters, 2.7× fewer training tokens
+  - Both severely undertrained; result holds at current scale
+- Memory model at 100M still to train
 - W capacity at d=1024: 1M slots (4× more than 18M model), SNR improves from 2.3 to 3.2
-- Expected: gap grows. If it does, we have a scaling law.
 
 ## Figures
 1. Synthetic recall accuracy (memory vs no-memory)

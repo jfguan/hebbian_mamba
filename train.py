@@ -78,12 +78,15 @@ def sample(model, encode, decode, device, prompt="", n=200, temperature=0.8):
 
 def plot_losses(history, tag):
     fig, ax = plt.subplots(figsize=(10, 5))
-    steps = [h["step"] for h in history]
-    ax.plot(steps, [h["train_loss"] for h in history], label="train", alpha=0.7)
-    val = [(h["step"], h["val_loss"]) for h in history if "val_loss" in h]
+    use_tokens = "tokens" in history[0]
+    xs = [h["tokens"] / 1e6 for h in history] if use_tokens else [h["step"] for h in history]
+    xlabel = "Training tokens (M)" if use_tokens else "Step"
+    ax.plot(xs, [h["train_loss"] for h in history], label="train", alpha=0.7)
+    val = [(h["tokens"] / 1e6 if use_tokens else h["step"], h["val_loss"])
+           for h in history if "val_loss" in h]
     if val:
         ax.plot(*zip(*val), "o-", label="val", markersize=4)
-    ax.set(xlabel="step", ylabel="loss", title=f"Training — {tag}")
+    ax.set(xlabel=xlabel, ylabel="loss (nats)", title=f"Training — {tag}")
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
@@ -203,7 +206,8 @@ def main():
             optimizer.step()
 
             dt = time.time() - t0
-            entry = {"step": step, "train_loss": loss_accum}
+            tokens_seen = (step + 1) * args.batch_size * args.seq_len * grad_accum
+            entry = {"step": step, "train_loss": loss_accum, "tokens": tokens_seen}
             print(
                 f"step {step:5d} | loss {loss_accum:.4f} | ppl {math.exp(loss_accum):8.2f} | lr {lr:.2e} | {dt * 1000:.0f}ms",
                 flush=True,

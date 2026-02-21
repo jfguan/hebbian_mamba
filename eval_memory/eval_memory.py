@@ -135,14 +135,19 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--tokens", type=int, default=4096)
     p.add_argument("--windows", type=int, default=4)
-    p.add_argument("--model", type=str, default="checkpoints/model_mem1.pt")
+    p.add_argument("--model", type=str, default="checkpoints/model_memory.pt")
     p.add_argument("--segment", type=int, default=512)
+    p.add_argument("--dataset", type=str, default="pg19", choices=["pg19", "code"])
     args = p.parse_args()
 
     device = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
 
     model = load_model(args.model, device)
+    if args.dataset == "code":
+        from data_code import load_dataset
+    else:
+        from data import load_dataset
     ds = load_dataset()
 
     print_param_table(model)

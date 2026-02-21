@@ -20,23 +20,23 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--no-memory", action="store_true")
     p.add_argument("--resume", type=str, default=None)
-    p.add_argument("--steps", type=int, default=1000)
-    p.add_argument("--total-steps", type=int, default=4000)  # LR schedule spans full run
-    p.add_argument("--batch-size", type=int, default=2)
+    p.add_argument("--steps", type=int, default=2000)
+    p.add_argument("--total-steps", type=int, default=500_000)  # 1/2 Chinchilla optimal (1B tokens)
+    p.add_argument("--batch-size", type=int, default=1)
     p.add_argument("--seq-len", type=int, default=2048)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--warmup", type=int, default=200)
     p.add_argument("--memory-alpha", type=float, default=0.03)
     p.add_argument("--grad-accum", type=int, default=1)
     p.add_argument("--eval-interval", type=int, default=200)
-    p.add_argument("--ckpt-interval", type=int, default=500)
+    p.add_argument("--ckpt-interval", type=int, default=1000)
     p.add_argument("--tag", type=str, default=None)
     args = p.parse_args()
 
     from data_code import load_dataset, DataLoader
 
     use_memory = not args.no_memory
-    tag = args.tag or ("code100M_memory" if use_memory else "code100M_deep")
+    tag = args.tag or ("code100M_memory" if use_memory else "code100M_deep16")
 
     device = (
         "mps" if torch.backends.mps.is_available()
@@ -53,10 +53,11 @@ def main():
     train_loader = DataLoader(ds["train"], args.batch_size, args.seq_len)
     val_loader = DataLoader(ds["val"], args.batch_size, args.seq_len)
 
+    n_layers = 12 if use_memory else 16
     cfg = Config(
         vocab_size=ds["vocab_size"],
         d_model=1024,
-        n_layers=12,
+        n_layers=n_layers,
         d_state=16,
         use_memory=use_memory,
         memory_alpha=args.memory_alpha,
