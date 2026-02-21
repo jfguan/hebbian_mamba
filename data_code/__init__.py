@@ -15,8 +15,8 @@ TRAIN_TOKENS_PATH = os.path.join(DATA_DIR, "train_tokens.npy")
 VAL_TOKENS_PATH = os.path.join(DATA_DIR, "val_tokens.npy")
 
 MIN_FILE_CHARS = 4096     # only keep long files
-TRAIN_CHARS_TARGET = 15_000_000
-VAL_CHARS_TARGET = 1_000_000
+TRAIN_CHARS_TARGET = 32_000_000   # ~16M tokens at 2x compression
+VAL_CHARS_TARGET = 2_000_000
 BPE_TRAIN_CHARS = 2_000_000
 
 # Re-use the BPETokenizer from data/
@@ -77,12 +77,12 @@ def load_dataset(vocab_size=512):
     print(f"  Saved tokenizer to {TOKENIZER_PATH}")
 
     print("Tokenizing train set...")
-    train_data = np.array(tok.encode(train_text), dtype=np.int64)
+    train_data = np.array(tok.encode(train_text), dtype=np.uint16)
     print(f"  {len(train_text):,} chars -> {len(train_data):,} tokens ({len(train_text)/len(train_data):.1f}x compression)")
     np.save(TRAIN_TOKENS_PATH, train_data)
 
     print("Tokenizing val set...")
-    val_data = np.array(tok.encode(val_text), dtype=np.int64)
+    val_data = np.array(tok.encode(val_text), dtype=np.uint16)
     print(f"  {len(val_text):,} chars -> {len(val_data):,} tokens ({len(val_text)/len(val_data):.1f}x compression)")
     np.save(VAL_TOKENS_PATH, val_data)
 

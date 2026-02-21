@@ -22,6 +22,7 @@ class Config:
     n_layers: int = 8
     use_memory: bool = True
     dual_memory: bool = False  # second W matrix with slower decay
+    memory_alpha: float = 0.03  # residual injection scale
 
 
 class HebbianMambaLayer(nn.Module):
@@ -32,6 +33,7 @@ class HebbianMambaLayer(nn.Module):
         self.d_inner = mcfg.d_inner
         self.d_conv = mcfg.d_conv
         self.use_memory = cfg.use_memory
+        self.memory_alpha = cfg.memory_alpha
 
         self.norm = RMSNorm(D)
         self.mamba = MambaBlock(mcfg)
@@ -67,9 +69,9 @@ class HebbianMambaLayer(nn.Module):
             log_gamma_slow = torch.sigmoid(self.decay_slow).log()
             M_slow = torch.exp(diffs * log_gamma_slow) * causal
             reads = reads + torch.bmm(scores * M_slow, v)
-            alpha = 0.01
+            alpha = self.memory_alpha / 2  # dual: halve to keep total injection same
         else:
-            alpha = 0.03
+            alpha = self.memory_alpha
         return out + alpha * self.proj_read(reads).to(out.dtype)
 
     def forward(self, x):
@@ -109,7 +111,7 @@ class HebbianMambaLayer(nn.Module):
             read = read + torch.einsum("bij,bj->bi", W_slow, out)
             W_slow = gamma_slow * W_slow + write
 
-        alpha = 0.01 if self.dual_memory else 0.03
+        alpha = self.memory_alpha / 2 if self.dual_memory else self.memory_alpha
         out = out + alpha * self.proj_read(read)
 
         new_state = {"cache": cache, "memory": W, "r_prev": raw_out}

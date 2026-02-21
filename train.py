@@ -108,6 +108,7 @@ def main():
     p.add_argument("--d-model", type=int, default=512)
     p.add_argument("--d-state", type=int, default=16)
     p.add_argument("--tag", type=str, default=None)
+    p.add_argument("--memory-alpha", type=float, default=0.03)
     p.add_argument("--grad-accum", type=int, default=1)
     p.add_argument("--compile", action="store_true")
     args = p.parse_args()
@@ -141,7 +142,7 @@ def main():
     train_loader = DataLoader(ds["train"], args.batch_size, args.seq_len)
     val_loader = DataLoader(ds["val"], args.batch_size, args.seq_len)
 
-    cfg = Config(vocab_size=ds["vocab_size"], use_memory=use_memory, dual_memory=dual_memory, d_model=args.d_model, n_layers=args.n_layers, d_state=args.d_state)
+    cfg = Config(vocab_size=ds["vocab_size"], use_memory=use_memory, dual_memory=dual_memory, d_model=args.d_model, n_layers=args.n_layers, d_state=args.d_state, memory_alpha=args.memory_alpha)
     model = HebbianMamba(cfg).to(device)
     n_params = sum(p.numel() for p in model.parameters())
 
