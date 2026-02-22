@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.3.8)  22 FEB 2026 14:33
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.3.8)  22 FEB 2026 14:52
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -582,13 +582,13 @@ LaTeX Warning: `h' float specifier changed to `ht'.
 [4 <./figures/capacity.png>]
 
 [5 <./figures/prose_training.pdf>]
-<figures/code_training_18M.pdf, id=173, 505.89pt x 289.08pt>
+<figures/code_training_18M.pdf, id=175, 505.89pt x 289.08pt>
 File: figures/code_training_18M.pdf Graphic file (type pdf)
 <use figures/code_training_18M.pdf>
 Package pdftex.def Info: figures/code_training_18M.pdf  used on input line 241.
 
 (pdftex.def)             Requested size: 337.86465pt x 193.06946pt.
-<eval_memory/eval_memory.png, id=174, 867.24pt x 578.16pt>
+<eval_memory/eval_memory.png, id=177, 867.24pt x 578.16pt>
 File: eval_memory/eval_memory.png Graphic file (type png)
 <use eval_memory/eval_memory.png>
 Package pdftex.def Info: eval_memory/eval_memory.png  used on input line 267.
@@ -618,7 +618,7 @@ Underfull \vbox (badness 10000) has occurred while \output is active []
 
 
 [7 <./eval_memory/eval_memory.png>]
-<figures/code_training_100M.pdf, id=239, 505.89pt x 289.08pt>
+<figures/code_training_100M.pdf, id=243, 505.89pt x 289.08pt>
 File: figures/code_training_100M.pdf Graphic file (type pdf)
 <use figures/code_training_100M.pdf>
 Package pdftex.def Info: figures/code_training_100M.pdf  used on input line 337
@@ -628,7 +628,7 @@ Package pdftex.def Info: figures/code_training_100M.pdf  used on input line 337
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
-<figures/long_context_100M.pdf, id=241, 578.16pt x 433.62pt>
+<figures/long_context_100M.pdf, id=245, 578.16pt x 433.62pt>
 File: figures/long_context_100M.pdf Graphic file (type pdf)
 <use figures/long_context_100M.pdf>
 Package pdftex.def Info: figures/long_context_100M.pdf  used on input line 381.
@@ -640,7 +640,7 @@ LaTeX Warning: `h' float specifier changed to `ht'.
 
 
 [8 <./figures/code_training_100M.pdf>]
-<figures/decay_gamma.pdf, id=299, 505.89pt x 289.08pt>
+<figures/decay_gamma.pdf, id=303, 505.89pt x 289.08pt>
 File: figures/decay_gamma.pdf Graphic file (type pdf)
 <use figures/decay_gamma.pdf>
 Package pdftex.def Info: figures/decay_gamma.pdf  used on input line 392.
@@ -652,7 +652,7 @@ LaTeX Warning: `h' float specifier changed to `ht'.
 
 
 [9 <./figures/long_context_100M.pdf>]
-<figures/stack_training_100M.pdf, id=358, 505.89pt x 289.08pt>
+<figures/stack_training_100M.pdf, id=363, 505.89pt x 289.08pt>
 File: figures/stack_training_100M.pdf Graphic file (type pdf)
 <use figures/stack_training_100M.pdf>
 Package pdftex.def Info: figures/stack_training_100M.pdf  used on input line 42
@@ -665,7 +665,7 @@ LaTeX Warning: `h' float specifier changed to `ht'.
 
 
 [10 <./figures/decay_gamma.pdf>]
-<figures/long_context_stack.pdf, id=408, 578.16pt x 433.62pt>
+<figures/long_context_stack.pdf, id=415, 578.16pt x 433.62pt>
 File: figures/long_context_stack.pdf Graphic file (type pdf)
 <use figures/long_context_stack.pdf>
 Package pdftex.def Info: figures/long_context_stack.pdf  used on input line 466
@@ -692,21 +692,17 @@ LaTeX Warning: `h' float specifier changed to `ht'.
 LaTeX2e <2024-11-01> patch level 2
 L3 programming layer <2025-01-18>
  ***********
-
-
-LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
-
 Package rerunfilecheck Info: File `paper.out' has not changed.
 (rerunfilecheck)             Checksum: E6B9BA5AC297C136B388517DACC46448;1813.
  ) 
 Here is how much of TeX's memory you used:
- 13448 strings out of 473190
- 209159 string characters out of 5715801
- 641970 words of memory out of 5000000
+ 13445 strings out of 473190
+ 209135 string characters out of 5715801
+ 641968 words of memory out of 5000000
  36206 multiletter control sequences out of 15000+600000
- 601456 words of font info for 211 fonts, out of 8000000 for 9000
+ 601326 words of font info for 209 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 75i,9n,79p,1340b,580s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,9n,79p,1340b,568s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb
 ></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb>
 </usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb><
@@ -720,10 +716,10 @@ ocal/texlive/2025/texmf-dist/fonts/type1/public/cm-super/sftt1000.pfb></usr/loc
 al/texlive/2025/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/local/texlive
 /2025/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/local/texlive/2025/texm
 f-dist/fonts/type1/urw/times/utmri8a.pfb>
-Output written on paper/paper.pdf (15 pages, 802084 bytes).
+Output written on paper/paper.pdf (15 pages, 803011 bytes).
 PDF statistics:
- 652 PDF objects out of 1000 (max. 8388607)
- 286 compressed objects within 3 object streams
+ 658 PDF objects out of 1000 (max. 8388607)
+ 292 compressed objects within 3 object streams
  90 named destinations out of 1000 (max. 500000)
  46726 words of extra memory for PDF output out of 51595 (max. 10000000)
 

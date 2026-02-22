@@ -501,6 +501,8 @@ We conjecture that $W$'s relative benefit is governed by task difficulty: as the
 \subsection*{Limitations}
 $W$'s two projection matrices add roughly 25\% to parameter count per layer. The real constraints are associative capacity (${\sim}d$ orthogonal associations per layer) and the single scalar decay per layer, which cannot differentiate retention by content or recency beyond a fixed exponential. The prose experiments used a cosine LR schedule set to complete at 6M tokens before it was clear models were undertrained; the reported gaps are conservative lower bounds. We have only evaluated on Mamba; transfer to other SSMs is straightforward but untested.
 
+All experiments were run on a single MacBook Pro (Apple M-series, 24\,GB unified memory) using PyTorch MPS. This imposes practical constraints: bf16 is unsupported for some operations on MPS, batch sizes are small, and 100M-parameter runs take days. Results have not been reproduced on GPU hardware. This paper was written with substantial assistance from a large language model (Claude); all experimental results, code, and final editorial judgements are the author's own.
+
 \subsection*{Future Directions}
 \begin{itemize}
   \item \textbf{Training}: longer sequences (gradient signal for longer-range associations), harder datasets (multi-document QA, multi-file repositories).
