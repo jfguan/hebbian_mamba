@@ -245,21 +245,29 @@ The gap ($+$0.939 nats) is $10\times$ larger than on prose. Memory surpasses the
 
 \FloatBarrier
 \subsubsection*{W ablation}
-To confirm that $W$ itself (not just the additional parameters) drives the improvement, we compare two inference passes on the trained 18M code model: normal ($W$ updating each step) vs.\ frozen ($W$ reset to its pre-step value, so it never accumulates). Over 8 random 8K-token windows:
+To confirm that $W$ itself (not just the additional parameters) drives the improvement, we compare two inference passes on the trained 18M code model: normal ($W$ updating each step) vs.\ frozen ($W$ reset to its pre-step value, so it never accumulates). Evaluated over 8 random 16K-token windows:
 
 \begin{table}[h]
 \centering
+\caption{W ablation on 18M code model (8 windows $\times$ 16K tokens).}
 \begin{tabular}{lrr}
 \toprule
  & Val Loss & vs.\ updating \\
 \midrule
-$W$ updating (normal) & 2.019 & --- \\
-$W$ frozen            & 2.914 & $+$0.895 \\
+$W$ updating (normal) & 1.940 & --- \\
+$W$ frozen            & 2.877 & $+$0.938 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Freezing $W$ costs 0.895 nats --- nearly equal to the full memory-vs-baseline gap of 0.939. The improvement comes from $W$, not from the extra parameters. The delta is large from position 0 and consistent throughout the sequence, indicating $W$ provides useful associations immediately.
+Freezing $W$ costs 0.938 nats --- nearly equal to the full memory-vs-baseline gap of 0.939. The improvement comes from $W$, not from the extra parameters. Notably, the per-segment delta grows with context: $+$0.74 nats at 0--1K rising to $+$1.11 nats at 14--15K, confirming that $W$ accumulates associations over time rather than relying solely on immediate context.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.85\textwidth]{eval_memory/eval_memory.png}
+\caption{Per-segment loss for updating vs.\ frozen $W$ on the 18M code model (8 $\times$ 16K tokens). The gap widens with context as $W$ accumulates associations.}
+\label{fig:w_ablation}
+\end{figure}
 
 \FloatBarrier
 \subsubsection*{Long-context evaluation: Code (18M, codeparrot)}
@@ -389,7 +397,7 @@ At 18M, all 8 layers converge to $\gamma \approx 0.990$--$0.993$ (windows 97--14
 \FloatBarrier
 \subsection{Dataset Breadth: Multilingual Code (The Stack)}
 
-We train 100M models on The Stack \citep{kocetkov2022stack}: eight languages (Python, JavaScript, TypeScript, Java, C, C\texttt{++}, Rust, Go), files ${\geq}32{,}000$ chars, 1024-vocab BPE, ${\sim}$14.5M training tokens. Memory: 97.5M (11L), deep baseline: 101.1M (15L), $\alpha{=}0.04$. Both models are undertrained at 8.2M tokens; best-vs-best gap is $+$0.263 nats (1.621 vs.\ 1.884).
+We train 100M models on The Stack \citep{kocetkov2022stack}: eight languages (Python, JavaScript, TypeScript, Java, C, C\texttt{++}, Rust, Go), files ${\geq}32{,}000$ chars, ${\sim}$14.5M training tokens. We increase the BPE vocabulary to 1024 (from 512 used in previous experiments): a larger vocabulary provides more distinct token identities as write keys, reducing key collision in $W$ and giving the associative matrix more signal to exploit. Memory: 97.5M (11L), deep baseline: 101.1M (15L), $\alpha{=}0.04$. Both models are undertrained at 8.2M tokens; best-vs-best gap is $+$0.263 nats (1.621 vs.\ 1.884).
 
 \begin{table}[h]
 \centering
@@ -453,32 +461,54 @@ Overall  & \textbf{1.453} & 2.092 & $+$0.639 \\
 
 Memory wins all 16 segments. The overall gap ($+$0.639) exceeds the Python 100M result ($+$0.424), consistent with the richer vocabulary and longer files providing denser associations for $W$. The deep baseline collapses to ${\sim}3.05$ nats on the two densest windows while memory stays at ${\sim}1.67$ nats.
 
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\textwidth]{figures/long_context_stack.pdf}
+\caption{Stack 100M per-segment val loss and gap over 16K context. Vertical dotted line marks training length (2K tokens).}
+\label{fig:long_context_stack}
+\end{figure}
+
 \clearpage
 \section{Related Work}
 
 \paragraph{Fast weights.}
-The closest prior work is Ba et al.~\citep{ba2016using}, who augment an RNN with a fast weight matrix updated by outer products of hidden states: $W_t = \lambda W_{t-1} + \eta\, h_t h_t^\top$, with retrieval via iterative inner-loop steps. Schmidhuber~\citep{schmidhuber1992learning} proposed fast-weight memories earlier in a metalearning context. Our $W$ follows the same outer-product-plus-decay principle but makes three changes that are critical in practice: (1) decoupling write and read keys via learned projections --- necessary for correct retrieval after Mamba state resets, as shown in Section~\ref{sec:recall}; (2) using a fixed injection scale $\alpha$ rather than a learned gate, preventing memory noise from destabilizing early training; and (3) admitting a parallel scan formulation (Section~\ref{sec:method}) that makes training as efficient as Mamba itself, unlike Ba et al.'s sequential inner-loop retrieval. Trained end-to-end with a standard language modeling objective and no special procedure, this decades-old idea produces large gains on modern language benchmarks.
+The closest prior work is Ba et al.~\citep{ba2016using}, who augment an RNN with a fast weight matrix updated by outer products of hidden states: $W_t = \lambda W_{t-1} + \eta\, h_t h_t^\top$, with retrieval via iterative inner-loop steps. Schmidhuber~\citep{schmidhuber1992learning} proposed fast-weight memories earlier in a metalearning context. Our $W$ follows the same outer-product-plus-decay principle but makes three changes: (1) decoupling write and read keys via learned projections --- necessary for correct retrieval after Mamba state resets, as shown in Section~\ref{sec:recall}; (2) using a fixed injection scale $\alpha$ rather than a learned gate, preventing memory noise from destabilizing early training; and (3) admitting a parallel scan formulation (Section~\ref{sec:method}) that makes training as efficient as Mamba itself, unlike Ba et al.'s sequential inner-loop retrieval.
 
 \paragraph{External and associative memory.}
-Neural Turing Machines \citep{graves2014neural} and Differentiable Neural Computers \citep{graves2016hybrid} maintain an external memory bank with learned content-based read and write heads. Our $W$ is simpler: a single $d \times d$ matrix updated by a fixed rule rather than a large addressable bank with learned attention weights. This trades capacity for constant per-step cost and trivial implementation. Modern Hopfield Networks \citep{ramsauer2021hopfield} show that softmax attention computes energy-minimizing retrievals in a Hopfield associative memory. Our $W$ implements an unnormalized causal variant: no softmax normalization, strict causal masking, and separate projections for write and read. These mechanisms are specific to SSMs: in a Transformer, the KV cache already provides lossless associative recall within the context window, leaving no gap for an additional memory matrix.
+Neural Turing Machines \citep{graves2014neural} and Differentiable Neural Computers \citep{graves2016hybrid} maintain an external memory bank with learned content-based read and write heads. Our $W$ is simpler: a single $d \times d$ matrix updated by a fixed rule, trading capacity for constant per-step cost. Modern Hopfield Networks \citep{ramsauer2021hopfield} show that softmax attention computes energy-minimizing retrievals in a Hopfield associative memory; our $W$ implements an unnormalized causal variant with strict causal masking and separate write/read projections. These mechanisms are specific to SSMs: in a Transformer, the KV cache already provides lossless associative recall within the context window, leaving no gap for an additional memory matrix.
 
 \paragraph{Memory in SSMs.}
-Test-Time Training \citep[TTT;][]{sun2024learning} is an RNN-like model whose hidden state is a weight matrix updated by gradient descent on a self-supervised loss at each step. Titans \citep{behrouz2024titans} combine a similar gradient-based neural memory module with sliding-window attention in a hybrid transformer. MesaNet \citep{von2025mesanet} extends this approach by solving the in-context optimization to local optimality at each step using conjugate gradients, with efficient chunkwise parallelization. All three learn the update rule via backpropagation through an inner-loop optimization, incurring additional per-step cost. Our $W$ uses a fixed outer-product rule with no inner loop: $O(d^2)$ per step, purely feedforward, requiring no modification to training. We find this suffices to produce a 0.94-nat gap over a parameter-matched baseline early in a 6M-token training run on Python code.
+Test-Time Training \citep[TTT;][]{sun2024learning} is an RNN-like model whose hidden state is a weight matrix updated by gradient descent on a self-supervised loss at each step. Titans \citep{behrouz2024titans} combine a similar gradient-based neural memory module with sliding-window attention in a hybrid transformer. MesaNet \citep{von2025mesanet} pushes this further by solving the in-context optimization to near-optimality using conjugate gradient steps; while it supports chunkwise parallelization within chunks, the inter-chunk CG iterations are inherently sequential and do not batch efficiently across long sequences. All three learn their update rule end-to-end through an inner-loop optimization, incurring significant per-step overhead. Our $W$ uses a fixed outer-product rule with no inner loop: $O(d^2)$ per step, purely feedforward, and trivially batchable --- at the cost of a less expressive update.
 
 \paragraph{Linear recurrences and the delta rule.}
-RetNet \citep{sun2023retentive}, RWKV \citep{peng2023rwkv}, and Gated Linear Attention \citep{yang2023gated} reformulate causal attention as a linear recurrence, achieving $O(1)$ state per step. Schlag et al.~\citep{schlag2021linear} make the connection explicit: linear attention is equivalent to a fast-weight programmer using Hebbian outer-product writes. DeltaNet \citep{yang2024deltanet} replaces the outer product with the error-corrective delta rule: $W_t \leftarrow W_{t-1} + \beta_t(v_t - W_{t-1}k_t)k_t^\top$, actively removing stale associations before writing new ones, which reduces interference more directly than exponential decay. LUCID \citep{duvvuri2026lucid} derives causal attention as the delta rule in an RKHS and applies a key--key preconditioner to decorrelate queries, decoupling retrieval sharpness from temperature to improve long-context recall in transformers. Our update is the simpler pure-Hebbian variant with learned decay, applied additively to Mamba rather than as a replacement for attention. Mamba handles short-range selective compression; $W$ handles long-range associative recall.
+RetNet \citep{sun2023retentive}, RWKV \citep{peng2023rwkv}, and Gated Linear Attention \citep{yang2023gated} reformulate causal attention as a linear recurrence, achieving $O(1)$ state per step. Mamba-2 \citep{dao2024mamba2} establishes a structured state-space duality (SSD) showing that Mamba's selective scan is equivalent to a form of linear attention. Schlag et al.~\citep{schlag2021linear} make the connection explicit: linear attention is equivalent to a fast-weight programmer using Hebbian outer-product writes. DeltaNet \citep{yang2024deltanet} replaces the outer product with the error-corrective delta rule: $W_t \leftarrow W_{t-1} + \beta_t(v_t - W_{t-1}k_t)k_t^\top$, actively removing stale associations before writing new ones, which reduces interference more directly than exponential decay. LUCID \citep{duvvuri2026lucid} derives causal attention as the delta rule in an RKHS and applies a key--key preconditioner to decorrelate queries, improving long-context recall in transformers --- but the method is applied to transformers and remains $O(T^2)$ in sequence length; the preconditioner helps attention \emph{forget} stale associations more cleanly, not avoid the quadratic cost. Our $W$ is $O(Td^2)$: linear in sequence length, at the cost of bounded associative capacity.
 
 \section{Conclusion}
 
-The contribution is combining existing pieces on a suitable problem. SSMs have a lossy state bottleneck; code is associative recall. A Hebbian matrix $W$ fills the gap directly, at constant memory cost and with no modification to the training objective.
+SSMs have a lossy state bottleneck; code is associative recall. A Hebbian $W$ fills the gap: drop-in (32 lines, no training changes), $O(Td^2)$ in sequence length, and compute-efficient --- the 18M memory model matches the 100M baseline at $5.6\times$ fewer parameters. The advantage persists to 16K tokens ($8\times$ training length) across all settings, while quadratic alternatives become intractable at exactly the contexts where associative recall matters most.
 
-The results are larger than expected. An 18M-parameter memory model reaches a validation loss of 1.848 nats on Python code versus 2.787 for a parameter-matched baseline ($+$0.939 nats), surpassing the baseline's best-ever performance after only 800K of 6M training tokens. Scaling to 100M parameters, the memory model leads at every checkpoint; best-checkpoint gap is $+$0.307 nats, and the 18M memory model outperforms the 100M baseline at every point in its training run. On a multilingual corpus (The Stack, 8 languages) at 100M parameters, the long-context gap widens to $+$0.639 nats at 16K tokens --- larger than the Python result, consistent with the richer vocabulary providing more associations for $W$ to exploit. The gap grows with context length across all settings as $W$ accumulates associations at test time. On prose the effect is smaller but consistent (2.477 vs.\ 2.527), suggesting the mechanism is broadly useful and especially powerful when data is highly associative.
+At 18M parameters, the memory model reaches 1.848 nats on Python code versus 2.787 for a parameter-matched baseline ($+$0.939 nats), surpassing the baseline's best-ever performance after only 800K tokens and outperforming the 100M baseline throughout its entire training run. At 100M parameters the best-checkpoint gap is $+$0.307 nats on Python and $+$0.639 nats at 16K tokens on multilingual code (The Stack) --- the largest gap we observe. On prose the effect is smaller but consistent (2.477 vs.\ 2.527), suggesting the mechanism is broadly useful and especially powerful when data is highly associative.
 
-\paragraph{Limitations.}
-$W$'s two projection matrices add roughly 25\% to parameter count per layer, comparable to adding extra Mamba layers --- but buy a qualitatively different capability those layers cannot provide. The real constraints are associative capacity (~$d$ orthogonal associations per layer) and the single scalar decay per layer, which cannot differentiate retention by content or recency beyond a fixed exponential. The prose experiments (Section~\ref{sec:prose}) used a cosine LR schedule set to complete at 6M tokens before it was clear models were undertrained; the reported gaps are conservative lower bounds. We have only evaluated on Mamba; transfer to other SSMs is straightforward but untested.
+\subsection*{Scaling Properties}
+In theory, several factors should compound favourably as scale increases:
+\begin{itemize}
+  \item \textbf{Associative capacity.} $W$ supports ${\sim}d$ approximately orthogonal associations per layer. At larger $d$, capacity grows and inter-association interference decreases, allowing richer retrieval without architectural changes.
+  \item \textbf{Longer context, more signal.} Every additional token is a write opportunity. At production context lengths (hundreds of thousands of tokens), $W$ has orders of magnitude more associations to exploit than in our experiments.
+  \item \textbf{Domain density.} Code, mathematics, and formal logic are dense in reusable symbol patterns --- variable names, function signatures, theorem components. The denser the associative structure, the more $W$ has to exploit; the Stack gap ($+$0.639) exceeding the Python gap ($+$0.424) is consistent with this, and harder domains (multi-file repositories, mathematical proofs) should widen it further.
+\end{itemize}
+We conjecture that $W$'s relative benefit is governed by task difficulty: as the baseline grows stronger it handles more of the problem on its own, shrinking the gap (as seen at 100M vs.\ 18M). But difficulty grows faster than baseline capability --- harder corpora, longer contexts, denser symbol reuse --- and $W$ fills exactly the associative gap the baseline leaves. The implication is that the gap should widen again on problems that are genuinely hard for the recurrent state to handle alone.
 
-\paragraph{Future directions.}
-Immediate: longer training sequences (gradient signal for longer-range associations), larger models (capacity scales with $d$), and harder datasets (multi-document QA, repositories spanning multiple files). A secondary $W$ with slower decay could capture a different timescale of association, with benefit expected to emerge at higher task difficulty. Continual learning is a natural setting: $W$ already implements online associative updates without gradient descent. Further: learnable or input-dependent $\alpha$, per-layer decay specialization (which our experiments hint at), and whether $W$ can be stored and updated in bf16 or lower precision without capacity loss. Image and video sequences are a natural fit: Vision Mamba processes patches in a fixed scan order and requires multiple passes to capture spatial associations between distant patches --- $W$ could short-circuit this by binding patch identities as they are first encountered. Video is even more directly associative, with objects, faces, and scenes appearing, disappearing, and reappearing across frames; $W$ could maintain entity identity across cuts without relying on the recurrent state to carry it.
+\subsection*{Limitations}
+$W$'s two projection matrices add roughly 25\% to parameter count per layer. The real constraints are associative capacity (${\sim}d$ orthogonal associations per layer) and the single scalar decay per layer, which cannot differentiate retention by content or recency beyond a fixed exponential. The prose experiments used a cosine LR schedule set to complete at 6M tokens before it was clear models were undertrained; the reported gaps are conservative lower bounds. We have only evaluated on Mamba; transfer to other SSMs is straightforward but untested.
+
+\subsection*{Future Directions}
+\begin{itemize}
+  \item \textbf{Training}: longer sequences (gradient signal for longer-range associations), harder datasets (multi-document QA, multi-file repositories).
+  \item \textbf{Memory design}: a secondary $W$ with slower decay to capture a different timescale; learnable or input-dependent $\alpha$; per-layer decay specialization.
+  \item \textbf{Efficiency}: bf16/low-precision storage and update of $W$ without capacity loss.
+  \item \textbf{Continual learning}: $W$ already implements online associative updates without gradient descent; no replay buffer or task boundary needed.
+  \item \textbf{Other modalities}: Vision Mamba processes patches in a fixed scan order; $W$ could bind patch identities on first encounter rather than relying on the recurrent state to carry them. Video is similarly associative (objects and scenes reappearing across cuts).
+\end{itemize}
 
 \begin{thebibliography}{10}
 
@@ -518,6 +548,11 @@ Alex Graves, Greg Wayne, Malcolm Reynolds, Tim Harley, Ivo Danihelka,
 Albert Gu and Tri Dao.
 \newblock Mamba: Linear-time sequence modeling with selective state spaces.
 \newblock \emph{arXiv preprint arXiv:2312.00752}, 2023.
+
+\bibitem{dao2024mamba2}
+Tri Dao and Albert Gu.
+\newblock Transformers are {SSMs}: Generalized models and efficient algorithms through structured state space duality.
+\newblock \emph{arXiv preprint arXiv:2405.21060}, 2024.
 
 \bibitem{peng2023rwkv}
 Bo~Peng, Eric Alcaide, Quentin Anthony, Alon Albalak, Samuel Arcadinho,
