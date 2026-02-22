@@ -134,7 +134,7 @@ if __name__ == "__main__":
             print(f"  step {step:3d}  loss={loss.item():.4f}  recall={acc.item():.1%}")
 
     # eval sweep
-    eval_pairs = [4, 8, 16, 32, 64, 128, 256]
+    eval_pairs = [4, 8, 16, 32, 64, 80, 96, 112, 128, 160, 192, 224, 256]
     results = {}
     model.eval()
     print("\ncapacity sweep:")
@@ -149,6 +149,12 @@ if __name__ == "__main__":
             results[p] = acc
             print(f"  {p:3d} pairs: {acc:.1%}")
 
+    with open("eval_recall/capacity_results.txt", "w") as f:
+        f.write("pairs,accuracy\n")
+        for p, acc in results.items():
+            f.write(f"{p},{acc:.4f}\n")
+    print("saved capacity_results.txt")
+
     # plot
     pairs_list = list(results.keys())
     acc_list = [results[p] * 100 for p in pairs_list]
@@ -156,9 +162,8 @@ if __name__ == "__main__":
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.plot(pairs_list, acc_list, "o-", linewidth=2, markersize=8)
     ax.axhline(y=100 / N_VALS, color="r", linestyle="--", alpha=0.5, label=f"chance ({100/N_VALS:.1f}%)")
-    ax.set_xscale("log", base=2)
     ax.set_xticks(pairs_list)
-    ax.set_xticklabels(pairs_list)
+    ax.set_xticklabels(pairs_list, rotation=45, ha="right")
     ax.set_xlabel("Number of KV pairs")
     ax.set_ylabel("Recall accuracy (%)")
     ax.set_title(f"Hebbian memory capacity (d_model={cfg.d_model})")
@@ -166,5 +171,5 @@ if __name__ == "__main__":
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig("capacity.png", dpi=150)
-    print(f"\nsaved capacity.png")
+    fig.savefig("eval_recall/capacity.png", dpi=150)
+    print(f"\nsaved eval_recall/capacity.png")
