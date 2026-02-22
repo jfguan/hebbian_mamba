@@ -1,7 +1,7 @@
 """Mamba + Hebbian associative memory.
 
-Memory: W_t = γW_{t-1} + v_t⊗k_t, read_t = W_t·k_t
-Training uses O(T²D) parallel form; inference uses O(D²) recurrent form.
+Memory: W_t = γW_{t-1} + v_t⊗k_t, read_t = W_{t-1}·rk_t
+Training uses O(TC·D + T·D²) chunkwise parallel form; inference uses O(D²) recurrent form.
 """
 
 from dataclasses import dataclass
@@ -23,6 +23,7 @@ class Config:
     use_memory: bool = True
     dual_memory: bool = False  # second W matrix with slower decay
     memory_alpha: float = 0.03  # residual injection scale
+    chunk_size: int = 64        # chunkwise parallel form; set >= T for full quadratic
 
 
 class HebbianMambaLayer(nn.Module):
@@ -39,6 +40,7 @@ class HebbianMambaLayer(nn.Module):
         self.mamba = MambaBlock(mcfg)
 
         self.dual_memory = cfg.dual_memory
+        self.chunk_size = cfg.chunk_size
         if self.use_memory:
             self.proj_write = nn.Linear(D, D, bias=False)
             self.proj_read = nn.Linear(D, D, bias=False)
@@ -47,32 +49,72 @@ class HebbianMambaLayer(nn.Module):
                 self.decay_slow = nn.Parameter(torch.tensor(6.9))  # σ(6.9) ≈ 0.999
 
     def _memory_attend(self, out):
-        """Parallel form: reads = (M ⊙ (rk·wk^T)) · v where M is causal decay mask."""
+        """Chunkwise parallel form: O(TC·D + T·D²) time, O(C² + D²) memory.
+
+        Splits the sequence into chunks of size C. Within each chunk the intra-chunk
+        contribution is the local quadratic form. Across chunks, the running W matrix
+        is passed forward and applied as γ^l * (W_prev @ rk). Reduces to the full
+        quadratic form when chunk_size >= T.
+        """
         B, T, D = out.shape
-        # Upcast to float32 — bf16 backward overflows without scaling
-        out32 = out.float()
-        log_gamma = torch.sigmoid(self.decay).log()
+        C = self.chunk_size
+        out32 = out.float()  # upcast: bf16 backward overflows without this
 
-        v = self.proj_write(out32)                      # write values
-        wk = F.pad(out32[:, :-1], (0, 0, 1, 0))        # write keys (shifted)
-        rk = out32                                       # read keys (current)
-
-        # Causal decay: M[t,s] = γ^(t-1-s) · 𝟙[s<t]
-        pos = torch.arange(T, device=out.device)
-        diffs = (pos[:, None] - 1 - pos[None, :]).clamp(min=0)
-        causal = (pos[:, None] > pos[None, :])
-        M = torch.exp(diffs * log_gamma) * causal
-
-        scores = torch.bmm(rk, wk.transpose(-1, -2))
-        reads = torch.bmm(scores * M, v)
+        gamma = torch.sigmoid(self.decay)
+        log_gamma = gamma.log()
         if self.dual_memory:
-            log_gamma_slow = torch.sigmoid(self.decay_slow).log()
-            M_slow = torch.exp(diffs * log_gamma_slow) * causal
-            reads = reads + torch.bmm(scores * M_slow, v)
-            alpha = self.memory_alpha / 2  # dual: halve to keep total injection same
-        else:
-            alpha = self.memory_alpha
-        return out + alpha * self.proj_read(reads).to(out.dtype)
+            gamma_slow = torch.sigmoid(self.decay_slow)
+            log_gamma_slow = gamma_slow.log()
+
+        v  = self.proj_write(out32)               # (B, T, D) write values
+        wk = F.pad(out32[:, :-1], (0, 0, 1, 0))  # (B, T, D) write keys (shifted)
+        rk = out32                                 # (B, T, D) read keys
+
+        W = out32.new_zeros(B, D, D)
+        W_slow = out32.new_zeros(B, D, D) if self.dual_memory else None
+        reads_list = []
+
+        for start in range(0, T, C):
+            end = min(start + C, T)
+            Ci = end - start
+            p = torch.arange(Ci, device=out.device)  # local positions [0..Ci-1]
+
+            rk_c = rk[:, start:end]   # (B, Ci, D)
+            wk_c = wk[:, start:end]   # (B, Ci, D)
+            v_c  =  v[:, start:end]   # (B, Ci, D)
+
+            # Inter-chunk: γ^l * (W_prev @ rk_c[l]) for each local position l
+            inter = torch.matmul(W, rk_c.transpose(1, 2)).transpose(1, 2)  # (B, Ci, D)
+            inter = inter * (gamma ** p)[None, :, None]
+
+            # Intra-chunk: (M_local ⊙ S_local) @ v_c
+            S = torch.bmm(rk_c, wk_c.transpose(1, 2))           # (B, Ci, Ci)
+            diffs_c = (p[:, None] - 1 - p[None, :]).clamp(min=0)  # (Ci, Ci)
+            causal_c = p[:, None] > p[None, :]
+            M_c = torch.exp(diffs_c * log_gamma) * causal_c      # (Ci, Ci)
+            intra = torch.bmm(S * M_c, v_c)                      # (B, Ci, D)
+
+            chunk_reads = inter + intra
+
+            if self.dual_memory:
+                inter_s = torch.matmul(W_slow, rk_c.transpose(1, 2)).transpose(1, 2)
+                inter_s = inter_s * (gamma_slow ** p)[None, :, None]
+                M_c_slow = torch.exp(diffs_c * log_gamma_slow) * causal_c
+                intra_s = torch.bmm(S * M_c_slow, v_c)
+                chunk_reads = chunk_reads + inter_s + intra_s
+
+            reads_list.append(chunk_reads)
+
+            # Advance W: γ^Ci * W + Σ_l γ^(Ci-1-l) * v_c[l] ⊗ wk_c[l]
+            gw = (gamma ** (Ci - 1 - p))[None, :, None]          # (1, Ci, 1)
+            W = gamma ** Ci * W + torch.bmm((v_c * gw).transpose(1, 2), wk_c)
+            if self.dual_memory:
+                gw_s = (gamma_slow ** (Ci - 1 - p))[None, :, None]
+                W_slow = gamma_slow ** Ci * W_slow + torch.bmm((v_c * gw_s).transpose(1, 2), wk_c)
+
+        all_reads = torch.cat(reads_list, dim=1)  # (B, T, D)
+        alpha = self.memory_alpha / 2 if self.dual_memory else self.memory_alpha
+        return out + alpha * self.proj_read(all_reads).to(out.dtype)
 
     def forward(self, x):
         residual = x
