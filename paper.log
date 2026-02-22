@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.3.8)  22 FEB 2026 11:50
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.3.8)  22 FEB 2026 13:04
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -367,32 +367,40 @@ File: microtype.cfg 2025/02/11 v3.2a microtype main configuration file (RS)
 )
 LaTeX Info: Redefining \microtypesetup on input line 3065.
 )
+(/usr/local/texlive/2025/texmf-dist/tex/latex/float/float.sty
+Package: float 2001/11/08 v1.3d Float enhancements (AL)
+\c@float@type=\count304
+\float@exts=\toks29
+\float@box=\box55
+\@float@everytoks=\toks30
+\@floatcapt=\box56
+)
 (/usr/local/texlive/2025/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def
 File: l3backend-pdftex.def 2024-05-08 L3 backend support: PDF output (pdfTeX)
-\l__color_backend_stack_int=\count304
-\l__pdf_internal_box=\box55
+\l__color_backend_stack_int=\count305
+\l__pdf_internal_box=\box57
 )
 (./paper.aux)
 \openout1 = `paper.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 22.
-LaTeX Font Info:    ... okay on input line 22.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 22.
-LaTeX Font Info:    ... okay on input line 22.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 22.
-LaTeX Font Info:    ... okay on input line 22.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 22.
-LaTeX Font Info:    ... okay on input line 22.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 22.
-LaTeX Font Info:    ... okay on input line 22.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 22.
-LaTeX Font Info:    ... okay on input line 22.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 22.
-LaTeX Font Info:    ... okay on input line 22.
-LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 22.
-LaTeX Font Info:    ... okay on input line 22.
-LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 22.
-LaTeX Font Info:    ... okay on input line 22.
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 23.
+LaTeX Font Info:    ... okay on input line 23.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 23.
+LaTeX Font Info:    ... okay on input line 23.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 23.
+LaTeX Font Info:    ... okay on input line 23.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 23.
+LaTeX Font Info:    ... okay on input line 23.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 23.
+LaTeX Font Info:    ... okay on input line 23.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 23.
+LaTeX Font Info:    ... okay on input line 23.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 23.
+LaTeX Font Info:    ... okay on input line 23.
+LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 23.
+LaTeX Font Info:    ... okay on input line 23.
+LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 23.
+LaTeX Font Info:    ... okay on input line 23.
 
 *geometry* driver: auto-detecting
 *geometry* detected driver: pdftex
@@ -460,7 +468,7 @@ LaTeX Font Info:    ... okay on input line 22.
 * \@reversemarginfalse
 * (1in=72.27pt=25.4mm, 1cm=28.453pt)
 
-Package hyperref Info: Link coloring OFF on input line 22.
+Package hyperref Info: Link coloring OFF on input line 23.
 (./paper.out) (./paper.out)
 \@outlinefile=\write3
 \openout3 = `paper.out'.
@@ -468,17 +476,17 @@ Package hyperref Info: Link coloring OFF on input line 22.
 
 (/usr/local/texlive/2025/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
 [Loading MPS to PDF converter (version 2006.09.02).]
-\scratchcounter=\count305
+\scratchcounter=\count306
 \scratchdimen=\dimen179
-\scratchbox=\box56
-\nofMPsegments=\count306
-\nofMParguments=\count307
-\everyMPshowfont=\toks29
-\MPscratchCnt=\count308
+\scratchbox=\box58
+\nofMPsegments=\count307
+\nofMParguments=\count308
+\everyMPshowfont=\toks31
+\MPscratchCnt=\count309
 \MPscratchDim=\dimen180
-\MPnumerator=\count309
-\makeMPintoPDFobject=\count310
-\everyMPtoPDFconversion=\toks30
+\MPnumerator=\count310
+\makeMPintoPDFobject=\count311
+\everyMPtoPDFconversion=\toks32
 ) (/usr/local/texlive/2025/texmf-dist/tex/latex/epstopdf-pkg/epstopdf-base.sty
 Package: epstopdf-base 2020-01-24 v2.11 Base part for package epstopdf
 Package epstopdf-base Info: Redefining graphics rule for `.eps' on input line 4
@@ -488,20 +496,20 @@ Package epstopdf-base Info: Redefining graphics rule for `.eps' on input line 4
 File: epstopdf-sys.cfg 2010/07/13 v1.3 Configuration of (r)epstopdf for TeX Liv
 e
 ))
-LaTeX Info: Redefining \microtypecontext on input line 22.
-Package microtype Info: Applying patch `item' on input line 22.
-Package microtype Info: Applying patch `toc' on input line 22.
-Package microtype Info: Applying patch `eqnum' on input line 22.
-Package microtype Info: Applying patch `footnote' on input line 22.
-Package microtype Info: Applying patch `verbatim' on input line 22.
-LaTeX Info: Redefining \microtypesetup on input line 22.
+LaTeX Info: Redefining \microtypecontext on input line 23.
+Package microtype Info: Applying patch `item' on input line 23.
+Package microtype Info: Applying patch `toc' on input line 23.
+Package microtype Info: Applying patch `eqnum' on input line 23.
+Package microtype Info: Applying patch `footnote' on input line 23.
+Package microtype Info: Applying patch `verbatim' on input line 23.
+LaTeX Info: Redefining \microtypesetup on input line 23.
 Package microtype Info: Generating PDF output.
 Package microtype Info: Character protrusion enabled (level 2).
 Package microtype Info: Using default protrusion set `alltext'.
 Package microtype Info: Automatic font expansion enabled (level 2),
 (microtype)             stretch: 20, shrink: 20, step: 1, non-selected.
 Package microtype Info: Using default expansion set `alltext-nott'.
-LaTeX Info: Redefining \showhyphens on input line 22.
+LaTeX Info: Redefining \showhyphens on input line 23.
 Package microtype Info: No adjustment of tracking.
 Package microtype Info: No adjustment of interword spacing.
 Package microtype Info: No adjustment of character kerning.
@@ -513,7 +521,7 @@ File: mt-ptm.cfg 2006/04/20 v1.7 microtype config. file: Times (RS)
 File: mt-cmr.cfg 2013/05/19 v2.2 microtype config. file: Computer Modern Roman 
 (RS)
 )
-LaTeX Font Info:    Trying to load font information for U+msa on input line 25.
+LaTeX Font Info:    Trying to load font information for U+msa on input line 26.
 
 
 (/usr/local/texlive/2025/texmf-dist/tex/latex/amsfonts/umsa.fd
@@ -522,7 +530,7 @@ File: umsa.fd 2013/01/14 v3.01 AMS symbols A
 (/usr/local/texlive/2025/texmf-dist/tex/latex/microtype/mt-msa.cfg
 File: mt-msa.cfg 2006/02/04 v1.1 microtype config. file: AMS symbols (a) (RS)
 )
-LaTeX Font Info:    Trying to load font information for U+msb on input line 25.
+LaTeX Font Info:    Trying to load font information for U+msb on input line 26.
 
 
 (/usr/local/texlive/2025/texmf-dist/tex/latex/amsfonts/umsb.fd
@@ -544,7 +552,7 @@ Package microtype Info: Loading generic protrusion settings for font family
 al/texlive/2025/texmf-dist/fonts/enc/dvips/base/8r.enc}{/usr/local/texlive/2025
 /texmf-dist/fonts/enc/dvips/cm-super/cm-super-t1.enc}]
 LaTeX Font Info:    Trying to load font information for TS1+ptm on input line 6
-0.
+1.
 
 (/usr/local/texlive/2025/texmf-dist/tex/latex/psnfss/ts1ptm.fd
 File: ts1ptm.fd 2001/06/04 font definitions for TS1/ptm.
@@ -554,40 +562,50 @@ File: ts1ptm.fd 2001/06/04 font definitions for TS1/ptm.
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
+<figures/capacity.png, id=89, 578.16pt x 361.35pt>
+File: figures/capacity.png Graphic file (type png)
+<use figures/capacity.png>
+Package pdftex.def Info: figures/capacity.png  used on input line 137.
+(pdftex.def)             Requested size: 298.11374pt x 186.32063pt.
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
 
 
 [3]
-<figures/prose_training.pdf, id=95, 505.89pt x 289.08pt>
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+<figures/prose_training.pdf, id=106, 505.89pt x 289.08pt>
 File: figures/prose_training.pdf Graphic file (type pdf)
 <use figures/prose_training.pdf>
-Package pdftex.def Info: figures/prose_training.pdf  used on input line 180.
+Package pdftex.def Info: figures/prose_training.pdf  used on input line 183.
 (pdftex.def)             Requested size: 337.86465pt x 193.06946pt.
 
-
 LaTeX Warning: `h' float specifier changed to `ht'.
 
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
 
+Underfull \vbox (badness 5862) has occurred while \output is active []
+
+
+
+[4
+pdfTeX warning (ext4): destination with the same identifier (name{figure.1}) ha
+s been already used, duplicate ignored
+<argument> ...shipout:D \box_use:N \l_shipout_box 
+                                                  \__shipout_drop_firstpage_...
+l.222 \end{table}
+                  <./figures/capacity.png>]
+
 LaTeX Warning: `h' float specifier changed to `ht'.
 
-
-
-[4]
-
-LaTeX Warning: `h' float specifier changed to `ht'.
-
-
-LaTeX Warning: `h' float specifier changed to `ht'.
-
-
-LaTeX Warning: `h' float specifier changed to `ht'.
-
-<figures/code_training.pdf, id=106, 867.24pt x 289.08pt>
+<figures/code_training.pdf, id=116, 867.24pt x 289.08pt>
 File: figures/code_training.pdf Graphic file (type pdf)
 <use figures/code_training.pdf>
-Package pdftex.def Info: figures/code_training.pdf  used on input line 277.
+Package pdftex.def Info: figures/code_training.pdf  used on input line 244.
 (pdftex.def)             Requested size: 397.48499pt x 132.4976pt.
 
 LaTeX Warning: `h' float specifier changed to `ht'.
@@ -596,38 +614,62 @@ LaTeX Warning: `h' float specifier changed to `ht'.
 LaTeX Warning: `h' float specifier changed to `ht'.
 
 
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 303.
+Underfull \vbox (badness 1400) has occurred while \output is active []
+
+
+
+[5
+pdfTeX warning (ext4): destination with the same identifier (name{table.1}) has
+ been already used, duplicate ignored
+<argument> ...shipout:D \box_use:N \l_shipout_box 
+                                                  \__shipout_drop_firstpage_...
+l.295 \end{table}
+                 
+pdfTeX warning (ext4): destination with the same identifier (name{figure.2}) ha
+s been already used, duplicate ignored
+<argument> ...shipout:D \box_use:N \l_shipout_box 
+                                                  \__shipout_drop_firstpage_...
+l.295 \end{table}
+                 
+pdfTeX warning (ext4): destination with the same identifier (name{table.3}) has
+ been already used, duplicate ignored
+<argument> ...shipout:D \box_use:N \l_shipout_box 
+                                                  \__shipout_drop_firstpage_...
+l.295 \end{table}
+                  <./figures/prose_training.pdf>]
+
+LaTeX Warning: `h' float specifier changed to `ht'.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\to' on input line 303.
+(hyperref)                removing `math shift' on input line 302.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 303.
+(hyperref)                removing `\to' on input line 302.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 302.
 
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
 
-
-[5 <./figures/prose_training.pdf>]
-
 LaTeX Warning: `h' float specifier changed to `ht'.
 
 
-Overfull \hbox (110.74477pt too wide) in paragraph at lines 354--377
+Overfull \hbox (110.74477pt too wide) in paragraph at lines 353--376
  [][] 
  []
 
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
-<figures/long_context_100M.pdf, id=167, 578.16pt x 433.62pt>
+<figures/long_context_100M.pdf, id=179, 578.16pt x 433.62pt>
 File: figures/long_context_100M.pdf Graphic file (type pdf)
 <use figures/long_context_100M.pdf>
-Package pdftex.def Info: figures/long_context_100M.pdf  used on input line 382.
+Package pdftex.def Info: figures/long_context_100M.pdf  used on input line 381.
 
 (pdftex.def)             Requested size: 357.73405pt x 268.29907pt.
 
@@ -635,36 +677,92 @@ LaTeX Warning: `h' float specifier changed to `ht'.
 
 
 
-[6]
+[6
+pdfTeX warning (ext4): destination with the same identifier (name{table.2}) has
+ been already used, duplicate ignored
+<argument> ...shipout:D \box_use:N \l_shipout_box 
+                                                  \__shipout_drop_firstpage_...
+l.388 \subsection
+                 {Dataset Breadth: Multilingual Code (The Stack)}]
+Overfull \hbox (92.96718pt too wide) in paragraph at lines 399--409
+ [][] 
+ []
 
-[7 <./figures/code_training.pdf>]
 
-[8]
+LaTeX Warning: `h' float specifier changed to `ht'.
 
-[9 <./figures/long_context_100M.pdf>]
+
+
+[7
+pdfTeX warning (ext4): destination with the same identifier (name{figure.3}) ha
+s been already used, duplicate ignored
+<argument> ...shipout:D \box_use:N \l_shipout_box 
+                                                  \__shipout_drop_firstpage_...
+l.413 
+       <./figures/code_training.pdf>]
+
+[8
+pdfTeX warning (ext4): destination with the same identifier (name{table.4}) has
+ been already used, duplicate ignored
+<argument> ...shipout:D \box_use:N \l_shipout_box 
+                                                  \__shipout_drop_firstpage_...
+l.414 \clearpage
+                ]
+
+[9
+pdfTeX warning (ext4): destination with the same identifier (name{table.5}) has
+ been already used, duplicate ignored
+<argument> ...shipout:D \box_use:N \l_shipout_box 
+                                                  \__shipout_drop_firstpage_...
+l.414 \clearpage
+                
+pdfTeX warning (ext4): destination with the same identifier (name{table.6}) has
+ been already used, duplicate ignored
+<argument> ...shipout:D \box_use:N \l_shipout_box 
+                                                  \__shipout_drop_firstpage_...
+l.414 \clearpage
+                
+pdfTeX warning (ext4): destination with the same identifier (name{table.7}) has
+ been already used, duplicate ignored
+<argument> ...shipout:D \box_use:N \l_shipout_box 
+                                                  \__shipout_drop_firstpage_...
+l.414 \clearpage
+                ]
 
 [10
+pdfTeX warning (ext4): destination with the same identifier (name{figure.4}) ha
+s been already used, duplicate ignored
+<argument> ...shipout:D \box_use:N \l_shipout_box 
+                                                  \__shipout_drop_firstpage_...
+l.414 \clearpage
+                 <./figures/long_context_100M.pdf>]
+
+[11
 
 ]
 
-[11]
+[12]
 
-[12] (./paper.aux)
+[13] (./paper.aux)
  ***********
 LaTeX2e <2024-11-01> patch level 2
 L3 programming layer <2025-01-18>
  ***********
+
+
+LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
+
 Package rerunfilecheck Info: File `paper.out' has not changed.
-(rerunfilecheck)             Checksum: A023D3C6B1CBC01926A8D4355DE71BA3;1729.
+(rerunfilecheck)             Checksum: E6B9BA5AC297C136B388517DACC46448;1813.
  ) 
 Here is how much of TeX's memory you used:
- 13359 strings out of 473190
- 206455 string characters out of 5715801
- 648017 words of memory out of 5000000
- 36124 multiletter control sequences out of 15000+600000
- 602174 words of font info for 220 fonts, out of 8000000 for 9000
+ 13448 strings out of 473190
+ 207982 string characters out of 5715801
+ 655709 words of memory out of 5000000
+ 36205 multiletter control sequences out of 15000+600000
+ 602062 words of font info for 219 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 75i,10n,79p,1215b,604s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,10n,79p,1215b,598s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb
 ></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb>
 </usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb><
@@ -678,10 +776,10 @@ ocal/texlive/2025/texmf-dist/fonts/type1/public/cm-super/sftt1000.pfb></usr/loc
 al/texlive/2025/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/local/texlive
 /2025/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/local/texlive/2025/texm
 f-dist/fonts/type1/urw/times/utmri8a.pfb>
-Output written on paper.pdf (12 pages, 245470 bytes).
+Output written on paper.pdf (13 pages, 298836 bytes).
 PDF statistics:
- 419 PDF objects out of 1000 (max. 8388607)
- 234 compressed objects within 3 object streams
- 74 named destinations out of 1000 (max. 500000)
- 46696 words of extra memory for PDF output out of 51595 (max. 10000000)
+ 440 PDF objects out of 1000 (max. 8388607)
+ 252 compressed objects within 3 object streams
+ 80 named destinations out of 1000 (max. 500000)
+ 46701 words of extra memory for PDF output out of 51595 (max. 10000000)
 

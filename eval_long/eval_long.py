@@ -21,7 +21,7 @@ from model import HebbianMamba
 
 class Tee:
     def __init__(self, path):
-        self.f = open(path, "w")
+        self.f = open(path, "w", buffering=1)  # line-buffered: flushes after every \n
         self.stdout = sys.stdout
     def write(self, s):
         self.stdout.write(s)
@@ -30,6 +30,7 @@ class Tee:
         self.stdout.flush()
         self.f.flush()
     def close(self):
+        sys.stdout = self.stdout  # restore before closing so atexit flush doesn't error
         self.f.close()
 
 

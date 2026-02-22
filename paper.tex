@@ -160,7 +160,7 @@ Wide ($d=576$, 8L)   & 2.589 & 13.32 \\
 \end{tabular}
 \end{table}
 
-The memory model outperforms both baselines. The gap widens throughout training (Table~\ref{tab:prose_dynamics}, Figure~\ref{fig:prose_training}), confirming all models are still improving at 6M tokens. The dense BMMs in the memory mechanism train faster per step than Mamba's parallel scan at this scale, so the gap is larger at iso-FLOPs.
+The memory model outperforms both baselines. Val loss is estimated over 10 random batches per checkpoint and is noisy; the apparent widening trend in Table~\ref{tab:prose_dynamics} should be interpreted cautiously. All models are still improving at 6M tokens. The dense BMMs in the memory mechanism train faster per step than Mamba's parallel scan at this scale, so the gap is larger at iso-FLOPs.
 
 \begin{table}[h]
 \centering
@@ -180,7 +180,7 @@ Tokens & Memory & Deep & Wide \\
 \begin{figure}[h]
 \centering
 \includegraphics[width=0.85\textwidth]{figures/prose_training.pdf}
-\caption{PG-19 val loss over training. The gap over the wide baseline is still widening at 6M tokens.}
+\caption{PG-19 val loss over training. Val estimated over 10 random batches per checkpoint (noisy).}
 \label{fig:prose_training}
 \end{figure}
 
@@ -246,7 +246,7 @@ Tokens & Memory & Deep & Gap \\
 \end{figure}
 
 \paragraph{Long-context evaluation (18M).}
-We evaluate both 18M models on 4 random 16K-token windows (8$\times$ training length) with no fine-tuning, measuring per-segment loss at 1K intervals (averaged over windows):
+We evaluate both 18M code models on 4 random 16K-token windows ($8\times$ training length) from the code val set, with no fine-tuning, measuring per-segment loss at 1K intervals (averaged over windows):
 
 \begin{table}[h]
 \centering
@@ -255,8 +255,20 @@ We evaluate both 18M models on 4 random 16K-token windows (8$\times$ training le
 Segment & Memory & Deep & Gap \\
 \midrule
 0K--1K   & 2.203 & 2.650 & $+$0.447 \\
+1K--2K   & 2.170 & 2.631 & $+$0.461 \\
 2K--3K   & 2.011 & 2.632 & $+$0.622 \\
+3K--4K   & 2.134 & 2.761 & $+$0.627 \\
+4K--5K   & 2.068 & 2.631 & $+$0.562 \\
+5K--6K   & 1.940 & 2.790 & $+$0.850 \\
+6K--7K   & 1.960 & 2.891 & $+$0.931 \\
 7K--8K   & 1.631 & 2.698 & $+$1.067 \\
+8K--9K   & 1.834 & 2.719 & $+$0.885 \\
+9K--10K  & 2.012 & 2.698 & $+$0.686 \\
+10K--11K & 1.992 & 2.686 & $+$0.694 \\
+11K--12K & 2.034 & 2.678 & $+$0.645 \\
+12K--13K & 1.893 & 2.802 & $+$0.910 \\
+13K--14K & 1.574 & 2.327 & $+$0.753 \\
+14K--15K & 1.460 & 2.451 & $+$0.992 \\
 15K--16K & 1.676 & 2.484 & $+$0.809 \\
 \midrule
 Overall  & 1.912 & 2.658 & $+$0.746 \\
@@ -264,7 +276,7 @@ Overall  & 1.912 & 2.658 & $+$0.746 \\
 \end{tabular}
 \end{table}
 
-The per-segment gap grows from $+$0.447 at 0--1K to $+$1.067 at 7--8K as $W$ accumulates file-level associations. Identifiers referenced late in a file were first defined early; by the time the usage site appears, $W$ has stored the (predecessor-of-definition, post-definition state) pair and retrieves it directly. The baseline must instead retain all bindings through its 16-dimensional recurrent state across thousands of intervening tokens.
+Memory wins every segment. The gap grows from $+$0.447 at 0--1K to $+$1.067 at 7--8K, peaks again at 14K--15K ($+$0.992), as $W$ accumulates file-level associations. Identifiers referenced late in a file were first defined early; by the time the usage site appears, $W$ has stored the (predecessor-of-definition, post-definition state) pair and retrieves it directly. The baseline must instead retain all bindings through its 16-dimensional recurrent state across thousands of intervening tokens.
 
 \paragraph{W ablation.}
 To confirm that $W$ itself (not just the additional parameters) drives the improvement, we compare two inference passes on the trained 18M code model: normal ($W$ updating each step) vs.\ frozen ($W$ reset to its pre-step value, so it never accumulates). Over 8 random 8K-token windows:
