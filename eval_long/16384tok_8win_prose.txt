@@ -1,0 +1,6 @@
+Device: mps | 16384 tokens x 8 windows
+
+Loading cached tokenizer and token arrays...
+  Train: 8,287,509 tokens | Val: 598,056 tokens
+Window 1/8: val[49991:66375]
+  checkpoints/model_memory.pt (18.0M d=512 L=8 mem=True): 2.5217
