@@ -102,12 +102,14 @@ def main():
     p.add_argument("--tokens",  type=int, default=4096)
     p.add_argument("--windows", type=int, default=4)
     p.add_argument("--segment", type=int, default=512)
-    p.add_argument("--dataset", type=str, default="pg19", choices=["pg19", "code"])
+    p.add_argument("--dataset", type=str, default="pg19", choices=["pg19", "code", "stack"])
     p.add_argument("--out",     type=str, default=None)
     args = p.parse_args()
 
     if args.dataset == "code":
         from data_code import load_dataset
+    elif args.dataset == "stack":
+        from data_stack import load_dataset
     else:
         from data import load_dataset
 
