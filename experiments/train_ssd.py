@@ -65,6 +65,8 @@ def main():
     p.add_argument("--gate-init", type=float, default=-5.0,
                    help="Initial value for loop gate (sigmoid applied)")
     p.add_argument("--memory-alpha", type=float, default=0.03)
+    p.add_argument("--loop-alpha", type=float, default=None,
+                   help="Memory alpha for loop passes > 0 (default: same as memory-alpha)")
     p.add_argument("--grad-accum", type=int, default=1)
     p.add_argument("--tag", type=str, default="code_ssd")
     p.add_argument("--resume", type=str, default=None)
@@ -100,6 +102,7 @@ def main():
         cfg.n_heads = args.n_heads
     cfg.stack_loops = args.stack_loops
     cfg.gate_init = args.gate_init
+    cfg.loop_alpha = args.loop_alpha if args.loop_alpha is not None else args.memory_alpha
     cfg.loop_start = args.loop_start if args.loop_start is not None else 0
     cfg.loop_end = args.loop_end if args.loop_end is not None else args.n_layers
 

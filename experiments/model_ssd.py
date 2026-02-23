@@ -260,16 +260,18 @@ class SSDLayer(nn.Module):
         self.proj_read = nn.Linear(D, D, bias=False)
         self.decay = nn.Parameter(torch.tensor(4.6))
 
-    def forward(self, x):
+    def forward(self, x, memory_alpha=None):
         residual = x
+        alpha = memory_alpha if memory_alpha is not None else self.memory_alpha
         out = self.ssd(self.norm(x))
         out = _memory_attend(out, self.proj_write, self.proj_read,
-                             self.decay, self.chunk_size, self.memory_alpha)
+                             self.decay, self.chunk_size, alpha)
         return residual + out
 
-    def step(self, x, state=None):
+    def step(self, x, state=None, memory_alpha=None):
         B = x.shape[0]
         residual = x
+        alpha = memory_alpha if memory_alpha is not None else self.memory_alpha
 
         ssd_state = state["ssd"] if state else None
         out, ssd_state = self.ssd.step(self.norm(x), ssd_state)
@@ -279,7 +281,7 @@ class SSDLayer(nn.Module):
 
         raw_out = out
         out, W = _memory_step(out, r_prev, W, self.proj_write, self.proj_read,
-                              self.decay, self.memory_alpha)
+                              self.decay, alpha)
 
         return residual + out, {"ssd": ssd_state, "memory": W, "r_prev": raw_out}
 
@@ -300,6 +302,9 @@ class HebbianMambaLoopSSD(nn.Module):
         self.loop_start = getattr(cfg, "loop_start", 0)
         self.loop_end = getattr(cfg, "loop_end", n)
 
+        self.memory_alpha = cfg.memory_alpha
+        self.loop_alpha = getattr(cfg, "loop_alpha", cfg.memory_alpha)
+
         self.embedding = nn.Embedding(cfg.vocab_size, cfg.d_model)
         self.layers = nn.ModuleList([SSDLayer(cfg) for _ in range(n)])
 
@@ -317,9 +322,10 @@ class HebbianMambaLoopSSD(nn.Module):
             x = layer(x)
         # Looped middle layers
         for k in range(self.stack_loops):
+            alpha = self.memory_alpha if k == 0 else self.loop_alpha
             x_before = x
             for layer in self.layers[self.loop_start:self.loop_end]:
-                x = layer(x)
+                x = layer(x, memory_alpha=alpha)
             if k > 0:
                 gate = torch.sigmoid(self.loop_gate)
                 x = x_before + gate * (x - x_before)
@@ -344,11 +350,11 @@ class HebbianMambaLoopSSD(nn.Module):
             si += 1
 
         # Looped middle layers
-        n_mid = self.loop_end - self.loop_start
         for k in range(self.stack_loops):
+            alpha = self.memory_alpha if k == 0 else self.loop_alpha
             x_before = x
             for layer in self.layers[self.loop_start:self.loop_end]:
-                x, s = layer.step(x, state=states[si] if states else None)
+                x, s = layer.step(x, state=states[si] if states else None, memory_alpha=alpha)
                 new_states.append(s)
                 si += 1
             if k > 0:
