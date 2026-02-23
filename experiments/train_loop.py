@@ -1,8 +1,8 @@
-"""Train HebbianMambaLoopSSD on codeparrot.
+"""Train HebbianMambaLoop on codeparrot.
 
 Usage:
-    uv run experiments/train_ssd.py
-    uv run experiments/train_ssd.py --tag ssd_test --steps 500
+    uv run experiments/train_loop.py
+    uv run experiments/train_loop.py --tag loop_test --steps 500
 """
 
 import argparse
@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 from model import Config
-from experiments.model_ssd import HebbianMambaLoopSSD
+from experiments.model_loop import HebbianMambaLoop
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -48,25 +48,14 @@ def main():
     p.add_argument("--batch-size", type=int, default=2)
     p.add_argument("--seq-len", type=int, default=2048)
     p.add_argument("--lr", type=float, default=6e-4)
-    p.add_argument("--warmup", type=int, default=20)
     p.add_argument("--eval-interval", type=int, default=100)
     p.add_argument("--ckpt-interval", type=int, default=500)
     p.add_argument("--n-layers", type=int, default=8)
     p.add_argument("--d-model", type=int, default=512)
     p.add_argument("--d-state", type=int, default=16)
-    p.add_argument("--n-heads", type=int, default=None,
-                   help="Number of SSD heads (default: d_inner // 128)")
-    p.add_argument("--stack-loops", type=int, default=1,
-                   help="Number of times to run the looped layers (default: 1)")
-    p.add_argument("--loop-start", type=int, default=None,
-                   help="First looped layer index (default: 0)")
-    p.add_argument("--loop-end", type=int, default=None,
-                   help="One past last looped layer (default: n_layers)")
-    p.add_argument("--gate-init", type=float, default=-5.0,
-                   help="Initial value for loop gate (sigmoid applied)")
     p.add_argument("--memory-alpha", type=float, default=0.03)
     p.add_argument("--grad-accum", type=int, default=1)
-    p.add_argument("--tag", type=str, default="code_ssd")
+    p.add_argument("--tag", type=str, default="code_loop")
     p.add_argument("--resume", type=str, default=None)
     p.add_argument("--compile", action="store_true")
     args = p.parse_args()
@@ -95,23 +84,11 @@ def main():
         memory_alpha=args.memory_alpha,
         use_memory=True,
     )
-    # Attach SSD-specific fields to config (read via getattr in model)
-    if args.n_heads is not None:
-        cfg.n_heads = args.n_heads
-    cfg.stack_loops = args.stack_loops
-    cfg.gate_init = args.gate_init
-    cfg.loop_start = args.loop_start if args.loop_start is not None else 0
-    cfg.loop_end = args.loop_end if args.loop_end is not None else args.n_layers
-
-    model = HebbianMambaLoopSSD(cfg).to(device)
+    model = HebbianMambaLoop(cfg).to(device)
     n_params = sum(p.numel() for p in model.parameters())
 
-    n_heads_actual = model.layers[0].ssd.n_heads
-    if args.stack_loops > 1:
-        loop_desc = f"loop layers {cfg.loop_start}-{cfg.loop_end-1} x{args.stack_loops}"
-    else:
-        loop_desc = "no loops"
-    print(f"{n_params/1e6:.2f}M params | {loop_desc} | {n_heads_actual} heads | {device}")
+    n_loop = sum(1 for l in model.layers if l.__class__.__name__ == "LoopedMambaLayer")
+    print(f"{n_params/1e6:.2f}M params | {n_loop}/{args.n_layers} looped layers | {device}")
 
     if args.compile:
         print("Compiling model...")
@@ -148,7 +125,7 @@ def main():
     try:
         for step in range(start_step, total_steps):
             t0 = time.time()
-            lr = cosine_lr(step, args.warmup, args.schedule_steps, args.lr, min_lr)
+            lr = cosine_lr(step, 20, args.schedule_steps, args.lr, min_lr)
             for pg in optimizer.param_groups:
                 pg["lr"] = lr
 
@@ -185,7 +162,7 @@ def main():
                 ckpt_path = os.path.join(out_dir, f"ckpt_{args.tag}_step{step}.pt")
                 torch.save(
                     {"model": raw_model.state_dict(), "optimizer": optimizer.state_dict(),
-                     "config": cfg, "step": step, "model_class": "HebbianMambaLoopSSD"},
+                     "config": cfg, "step": step, "model_class": "HebbianMambaLoop"},
                     ckpt_path,
                 )
                 print(f"  -> {ckpt_path}", flush=True)
@@ -205,7 +182,7 @@ def main():
     final_path = os.path.join(out_dir, f"model_{args.tag}.pt")
     torch.save(
         {"model": raw_model.state_dict(), "optimizer": optimizer.state_dict(),
-         "config": cfg, "step": step + 1, "model_class": "HebbianMambaLoopSSD"},
+         "config": cfg, "step": step + 1, "model_class": "HebbianMambaLoop"},
         final_path,
     )
     history = [json.loads(line) for line in open(log_path)]

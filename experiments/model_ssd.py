@@ -285,35 +285,47 @@ class SSDLayer(nn.Module):
 
 
 class HebbianMambaLoopSSD(nn.Module):
-    """HebbianMamba with SSD blocks. Optional full-stack looping.
+    """HebbianMamba with SSD blocks. Optional partial-stack looping.
 
-    stack_loops=2 reruns the entire layer stack twice with tied weights,
-    full gradient through all passes (Universal Transformer style).
+    stack_loops=2 reruns layers[loop_start:loop_end] twice with a learned
+    gate (init near zero). Boundary layers run once. Full gradient through
+    all passes (Universal Transformer style).
     """
 
     def __init__(self, cfg: Config):
         super().__init__()
         self.cfg = cfg
         self.stack_loops = getattr(cfg, "stack_loops", 1)
+        n = cfg.n_layers
+        self.loop_start = getattr(cfg, "loop_start", 0)
+        self.loop_end = getattr(cfg, "loop_end", n)
 
         self.embedding = nn.Embedding(cfg.vocab_size, cfg.d_model)
-        self.layers = nn.ModuleList([SSDLayer(cfg) for _ in range(cfg.n_layers)])
+        self.layers = nn.ModuleList([SSDLayer(cfg) for _ in range(n)])
 
         if self.stack_loops > 1:
-            self.loop_gate = nn.Parameter(torch.tensor(-5.0))
+            gate_init = getattr(cfg, "gate_init", -5.0)
+            self.loop_gate = nn.Parameter(torch.tensor(gate_init))
         self.norm = RMSNorm(cfg.d_model)
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
         self.embedding.weight = self.lm_head.weight
 
     def forward(self, input_ids, targets=None):
         x = self.embedding(input_ids)
+        # Pre-loop boundary layers
+        for layer in self.layers[:self.loop_start]:
+            x = layer(x)
+        # Looped middle layers
         for k in range(self.stack_loops):
             x_before = x
-            for layer in self.layers:
+            for layer in self.layers[self.loop_start:self.loop_end]:
                 x = layer(x)
             if k > 0:
                 gate = torch.sigmoid(self.loop_gate)
                 x = x_before + gate * (x - x_before)
+        # Post-loop boundary layers
+        for layer in self.layers[self.loop_end:]:
+            x = layer(x)
         logits = self.lm_head(self.norm(x))
         loss = None
         if targets is not None:
@@ -323,17 +335,32 @@ class HebbianMambaLoopSSD(nn.Module):
     def step(self, token, states=None):
         x = self.embedding(token)
         new_states = []
-        # states layout: [loop0_layer0, loop0_layer1, ..., loop1_layer0, ...]
-        n = len(self.layers)
+        si = 0  # state index
+
+        # Pre-loop boundary layers
+        for layer in self.layers[:self.loop_start]:
+            x, s = layer.step(x, state=states[si] if states else None)
+            new_states.append(s)
+            si += 1
+
+        # Looped middle layers
+        n_mid = self.loop_end - self.loop_start
         for k in range(self.stack_loops):
             x_before = x
-            for i, layer in enumerate(self.layers):
-                idx = k * n + i
-                x, s = layer.step(x, state=states[idx] if states else None)
+            for layer in self.layers[self.loop_start:self.loop_end]:
+                x, s = layer.step(x, state=states[si] if states else None)
                 new_states.append(s)
+                si += 1
             if k > 0:
                 gate = torch.sigmoid(self.loop_gate)
                 x = x_before + gate * (x - x_before)
+
+        # Post-loop boundary layers
+        for layer in self.layers[self.loop_end:]:
+            x, s = layer.step(x, state=states[si] if states else None)
+            new_states.append(s)
+            si += 1
+
         return self.lm_head(self.norm(x)), new_states
 
     def n_params(self):
