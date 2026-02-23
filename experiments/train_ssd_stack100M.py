@@ -1,7 +1,7 @@
 """Train a ~100M param HebbianMambaLoopSSD on The Stack.
 
-Architecture: 8 layers x 2 loops, d_model=1216, ~101M params.
-Gated stack looping with per-loop memory alpha.
+Architecture: 11 layers, first 4 looped x2, d_model=1024, ~99M params.
+Matches stack100M_memory param count. Gated stack looping with per-loop alpha.
 
 Usage:
     uv run experiments/train_ssd_stack100M.py
@@ -32,8 +32,8 @@ def main():
     p.add_argument("--seq-len", type=int, default=2048)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--warmup", type=int, default=500)
-    p.add_argument("--n-layers", type=int, default=8)
-    p.add_argument("--d-model", type=int, default=1216)
+    p.add_argument("--n-layers", type=int, default=11)
+    p.add_argument("--d-model", type=int, default=1024)
     p.add_argument("--d-state", type=int, default=16)
     p.add_argument("--stack-loops", type=int, default=2)
     p.add_argument("--memory-alpha", type=float, default=0.01)
@@ -72,7 +72,7 @@ def main():
     )
     cfg.stack_loops = args.stack_loops
     cfg.loop_start = 0
-    cfg.loop_end = args.n_layers
+    cfg.loop_end = 4
     cfg.gate_init = args.gate_init
     cfg.loop_alpha = args.loop_alpha
 
