@@ -36,10 +36,17 @@ class Tee:
 
 def load_model(path, device):
     ckpt = torch.load(path, map_location=device, weights_only=False)
-    model = HebbianMamba(ckpt["config"]).to(device)
-    model.load_state_dict(ckpt["model"])
+    if ckpt.get("model_class") == "HebbianMambaLoop":
+        from experiments.model_loop import HebbianMambaLoop
+        model = HebbianMambaLoop(ckpt["config"]).to(device)
+    elif ckpt.get("model_class") == "HebbianMambaLoopSSD":
+        from experiments.model_ssd import HebbianMambaLoopSSD
+        model = HebbianMambaLoopSSD(ckpt["config"]).to(device)
+    else:
+        model = HebbianMamba(ckpt["config"]).to(device)
+    model.load_state_dict(ckpt["model"], strict=False)
     model.eval()
-    n_params = sum(p.numel() for p in model.parameters())
+    n_params = sum(p.numel() for p in set(model.parameters()))
     cfg = ckpt["config"]
     label = f"{path} ({n_params/1e6:.1f}M d={cfg.d_model} L={cfg.n_layers} mem={cfg.use_memory})"
     short = path.replace("model_", "").replace(".pt", "")
