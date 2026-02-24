@@ -190,10 +190,31 @@ class SSDBlock(nn.Module):
         return y, {"conv_state": conv_state, "h": h}
 
 
-def _memory_attend(out, proj_write, proj_read, decay, chunk_size, memory_alpha):
+class LinearBlock(nn.Module):
+    """Trivial backbone: linear projection + SiLU. No sequence modeling."""
+
+    def __init__(self, cfg: Config):
+        super().__init__()
+        D = cfg.d_model
+        E = cfg.expand
+        self.proj = nn.Linear(D, E * D, bias=False)
+        self.gate = nn.Linear(D, E * D, bias=False)
+        self.out_proj = nn.Linear(E * D, D, bias=False)
+
+    def forward(self, x):
+        return self.out_proj(F.silu(self.gate(x)) * self.proj(x))
+
+    def step(self, x, state=None):
+        return self.forward(x.unsqueeze(1)).squeeze(1), {}
+
+
+def _memory_attend(out, proj_write, proj_read, decay, chunk_size, memory_alpha, write_alpha=None):
     """Chunkwise parallel Hebbian memory."""
     B, T, D = out.shape
     C = chunk_size
+    w_alpha = write_alpha if write_alpha is not None else memory_alpha
+    if w_alpha == 0 and memory_alpha == 0:
+        return out
     out32 = out.float()
 
     gamma = torch.sigmoid(decay)
@@ -226,19 +247,24 @@ def _memory_attend(out, proj_write, proj_read, decay, chunk_size, memory_alpha):
 
         reads_list.append(inter + intra)
 
-        gw = (gamma ** (Ci - 1 - p))[None, :, None]
-        W = gamma ** Ci * W + torch.bmm((v_c * gw).transpose(1, 2), wk_c)
+        if w_alpha > 0:
+            gw = (gamma ** (Ci - 1 - p))[None, :, None]
+            W = gamma ** Ci * W + torch.bmm((v_c * gw).transpose(1, 2), wk_c)
 
     all_reads = torch.cat(reads_list, dim=1)
     return out + memory_alpha * proj_read(all_reads).to(out.dtype)
 
 
-def _memory_step(out, r_prev, W, proj_write, proj_read, decay, memory_alpha):
+def _memory_step(out, r_prev, W, proj_write, proj_read, decay, memory_alpha, write_alpha=None):
     """Recurrent Hebbian memory step."""
+    w_alpha = write_alpha if write_alpha is not None else memory_alpha
     gamma = torch.sigmoid(decay)
-    write = torch.einsum("bi,bj->bij", proj_write(out), r_prev)
     read = torch.einsum("bij,bj->bi", W, out)
-    W = gamma * W + write
+    if w_alpha > 0:
+        write = torch.einsum("bi,bj->bij", proj_write(out), r_prev)
+        W = gamma * W + write
+    else:
+        W = gamma * W
     out = out + memory_alpha * proj_read(read)
     return out, W
 
@@ -253,35 +279,42 @@ class SSDLayer(nn.Module):
         self.memory_alpha = cfg.memory_alpha
         self.chunk_size = cfg.chunk_size
 
-        self.norm = RMSNorm(D)
-        self.ssd = SSDBlock(cfg)
+        n_norms = getattr(cfg, "stack_loops", 1)
+        self.norms = nn.ModuleList([RMSNorm(D) for _ in range(n_norms)])
+        backbone = getattr(cfg, "backbone", "ssd")
+        if backbone == "linear":
+            self.ssd = LinearBlock(cfg)
+        else:
+            self.ssd = SSDBlock(cfg)
 
         self.proj_write = nn.Linear(D, D, bias=False)
         self.proj_read = nn.Linear(D, D, bias=False)
         self.decay = nn.Parameter(torch.tensor(4.6))
 
-    def forward(self, x, memory_alpha=None):
+    def forward(self, x, memory_alpha=None, write_alpha=None, loop_idx=0):
         residual = x
         alpha = memory_alpha if memory_alpha is not None else self.memory_alpha
-        out = self.ssd(self.norm(x))
+        norm = self.norms[min(loop_idx, len(self.norms) - 1)]
+        out = self.ssd(norm(x))
         out = _memory_attend(out, self.proj_write, self.proj_read,
-                             self.decay, self.chunk_size, alpha)
+                             self.decay, self.chunk_size, alpha, write_alpha=write_alpha)
         return residual + out
 
-    def step(self, x, state=None, memory_alpha=None):
+    def step(self, x, state=None, memory_alpha=None, write_alpha=None, loop_idx=0):
         B = x.shape[0]
         residual = x
         alpha = memory_alpha if memory_alpha is not None else self.memory_alpha
+        norm = self.norms[min(loop_idx, len(self.norms) - 1)]
 
         ssd_state = state["ssd"] if state else None
-        out, ssd_state = self.ssd.step(self.norm(x), ssd_state)
+        out, ssd_state = self.ssd.step(norm(x), ssd_state)
 
         W = state["memory"] if state else x.new_zeros(B, self.d_model, self.d_model)
         r_prev = state["r_prev"] if state else x.new_zeros(B, self.d_model)
 
         raw_out = out
         out, W = _memory_step(out, r_prev, W, self.proj_write, self.proj_read,
-                              self.decay, alpha)
+                              self.decay, alpha, write_alpha=write_alpha)
 
         return residual + out, {"ssd": ssd_state, "memory": W, "r_prev": raw_out}
 
@@ -319,19 +352,20 @@ class HebbianMambaLoopSSD(nn.Module):
         x = self.embedding(input_ids)
         # Pre-loop boundary layers
         for layer in self.layers[:self.loop_start]:
-            x = layer(x)
+            x = layer(x, loop_idx=0)
         # Looped middle layers
         for k in range(self.stack_loops):
             alpha = self.memory_alpha if k == 0 else self.loop_alpha
+            w_alpha = None if k == 0 else 0.0  # read-only on pass 2+
             x_before = x
             for layer in self.layers[self.loop_start:self.loop_end]:
-                x = layer(x, memory_alpha=alpha)
+                x = layer(x, memory_alpha=alpha, write_alpha=w_alpha, loop_idx=k)
             if k > 0:
                 gate = torch.sigmoid(self.loop_gate)
                 x = x_before + gate * (x - x_before)
         # Post-loop boundary layers
         for layer in self.layers[self.loop_end:]:
-            x = layer(x)
+            x = layer(x, loop_idx=0)
         logits = self.lm_head(self.norm(x))
         loss = None
         if targets is not None:
@@ -345,16 +379,17 @@ class HebbianMambaLoopSSD(nn.Module):
 
         # Pre-loop boundary layers
         for layer in self.layers[:self.loop_start]:
-            x, s = layer.step(x, state=states[si] if states else None)
+            x, s = layer.step(x, state=states[si] if states else None, loop_idx=0)
             new_states.append(s)
             si += 1
 
         # Looped middle layers
         for k in range(self.stack_loops):
             alpha = self.memory_alpha if k == 0 else self.loop_alpha
+            w_alpha = None if k == 0 else 0.0  # read-only on pass 2+
             x_before = x
             for layer in self.layers[self.loop_start:self.loop_end]:
-                x, s = layer.step(x, state=states[si] if states else None, memory_alpha=alpha)
+                x, s = layer.step(x, state=states[si] if states else None, memory_alpha=alpha, write_alpha=w_alpha, loop_idx=k)
                 new_states.append(s)
                 si += 1
             if k > 0:
@@ -363,7 +398,7 @@ class HebbianMambaLoopSSD(nn.Module):
 
         # Post-loop boundary layers
         for layer in self.layers[self.loop_end:]:
-            x, s = layer.step(x, state=states[si] if states else None)
+            x, s = layer.step(x, state=states[si] if states else None, loop_idx=0)
             new_states.append(s)
             si += 1
 

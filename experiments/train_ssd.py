@@ -67,6 +67,8 @@ def main():
     p.add_argument("--memory-alpha", type=float, default=0.03)
     p.add_argument("--loop-alpha", type=float, default=None,
                    help="Memory alpha for loop passes > 0 (default: same as memory-alpha)")
+    p.add_argument("--dataset", type=str, default="code", choices=["code", "stack"])
+    p.add_argument("--backbone", type=str, default="ssd", choices=["ssd", "linear"])
     p.add_argument("--grad-accum", type=int, default=1)
     p.add_argument("--tag", type=str, default="code_ssd")
     p.add_argument("--resume", type=str, default=None)
@@ -84,7 +86,10 @@ def main():
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
-    from data_code import load_dataset, DataLoader
+    if args.dataset == "stack":
+        from data_stack import load_dataset, DataLoader
+    else:
+        from data_code import load_dataset, DataLoader
     ds = load_dataset()
     train_loader = DataLoader(ds["train"], args.batch_size, args.seq_len)
     val_loader = DataLoader(ds["val"], args.batch_size, args.seq_len)
@@ -103,13 +108,14 @@ def main():
     cfg.stack_loops = args.stack_loops
     cfg.gate_init = args.gate_init
     cfg.loop_alpha = args.loop_alpha if args.loop_alpha is not None else args.memory_alpha
+    cfg.backbone = args.backbone
     cfg.loop_start = args.loop_start if args.loop_start is not None else 0
     cfg.loop_end = args.loop_end if args.loop_end is not None else args.n_layers
 
     model = HebbianMambaLoopSSD(cfg).to(device)
     n_params = sum(p.numel() for p in model.parameters())
 
-    n_heads_actual = model.layers[0].ssd.n_heads
+    n_heads_actual = getattr(model.layers[0].ssd, "n_heads", 0)
     if args.stack_loops > 1:
         loop_desc = f"loop layers {cfg.loop_start}-{cfg.loop_end-1} x{args.stack_loops}"
     else:
