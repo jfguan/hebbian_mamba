@@ -7,60 +7,45 @@
 \citation{hebb1949organization}
 \@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {2}Method}{1}{section.2}\protected@file@percent }
-\citation{schmidhuber1992learning}
+\@writefile{toc}{\contentsline {paragraph}{Parameter count}{1}{section*.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Architecture overview. \textbf  {Left}: A single layer. The conv block (blue) extracts local features over 4 tokens. The Hebbian memory (orange) writes and reads associative bindings via a $D{\times }D$ outer-product matrix. \textbf  {Right}: The full model stacks $L$ identical layers with tied embeddings.}}{2}{figure.1}\protected@file@percent }
+\newlabel{fig:arch}{{1}{2}{Architecture overview. \textbf {Left}: A single layer. The conv block (blue) extracts local features over 4 tokens. The Hebbian memory (orange) writes and reads associative bindings via a $D{\times }D$ outer-product matrix. \textbf {Right}: The full model stacks $L$ identical layers with tied embeddings}{figure.1}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Hebbian Associative Memory}{2}{subsection.2.1}\protected@file@percent }
-\newlabel{eq:write}{{1}{2}{Hebbian Associative Memory}{equation.1}{}}
-\newlabel{eq:read}{{2}{2}{Hebbian Associative Memory}{equation.2}{}}
-\@writefile{toc}{\contentsline {paragraph}{Chunkwise parallel computation.}{2}{section*.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Learned per-layer parameters.}{2}{section*.2}\protected@file@percent }
+\newlabel{eq:write}{{2}{2}{Hebbian Associative Memory}{equation.2}{}}
+\newlabel{eq:read}{{3}{2}{Hebbian Associative Memory}{equation.3}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Convolution Backbone}{2}{subsection.2.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Full Architecture}{2}{subsection.2.3}\protected@file@percent }
-\citation{codeparrot}
-\@writefile{toc}{\contentsline {paragraph}{Parameter count.}{3}{section*.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {3}Experiments}{3}{section.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Backbone Ablation}{3}{subsection.3.1}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Backbone ablation on CodeParrot (1465 steps). All models use identical Hebbian memory. Conv+Heb at 4 layers matches SSD+Heb with fewer parameters and \emph  {no} SSM recurrence.}}{3}{table.1}\protected@file@percent }
-\newlabel{tab:backbone}{{1}{3}{Backbone ablation on CodeParrot (1465 steps). All models use identical Hebbian memory. Conv+Heb at 4 layers matches SSD+Heb with fewer parameters and \emph {no} SSM recurrence}{table.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Convolution Width}{3}{subsection.3.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Effect of convolution kernel width (8L, CodeParrot, step 200).}}{3}{table.2}\protected@file@percent }
-\newlabel{tab:conv_width}{{2}{3}{Effect of convolution kernel width (8L, CodeParrot, step 200)}{table.2}{}}
-\citation{peng2023rwkv}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Backbone ablation on The Stack ($\sim $100M params, 4000 steps). Mamba+Heb uses fixed $\alpha {=}0.04$, $\gamma {=}0.99$. Conv+Heb uses learned per-layer $\alpha $ (init 0.03) and $\gamma $ (init 0.99).}}{3}{table.1}\protected@file@percent }
+\newlabel{tab:backbone}{{1}{3}{Backbone ablation on The Stack ($\sim $100M params, 4000 steps). Mamba+Heb uses fixed $\alpha {=}0.04$, $\gamma {=}0.99$. Conv+Heb uses learned per-layer $\alpha $ (init 0.03) and $\gamma $ (init 0.99)}{table.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Training curves on The Stack ($\sim $100M params, 4000 steps). Solid lines show smoothed training loss; markers show validation loss. Conv+Heb tracks Mamba+Heb throughout training, while Mamba without Hebbian memory lags by $\sim $0.7 nats.}}{3}{figure.2}\protected@file@percent }
+\newlabel{fig:training}{{2}{3}{Training curves on The Stack ($\sim $100M params, 4000 steps). Solid lines show smoothed training loss; markers show validation loss. Conv+Heb tracks Mamba+Heb throughout training, while Mamba without Hebbian memory lags by $\sim $0.7 nats}{figure.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Learned Memory Parameters}{3}{subsection.3.2}\protected@file@percent }
 \citation{mcclelland1995complementary}
 \citation{schmidhuber1992learning,ba2016using,schlag2021linear}
 \citation{katharopoulos2020transformers}
 \citation{sun2023retentive}
 \citation{yang2024gated}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Learned Memory Parameters}{4}{subsection.3.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Memory strength ($\alpha $).}{4}{section*.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Decay timescale ($\gamma $).}{4}{section*.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Scaling to 100M Parameters}{4}{subsection.3.4}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces 100M-scale results on The Stack (2000 steps, still training).}}{4}{table.3}\protected@file@percent }
-\newlabel{tab:scaling}{{3}{4}{100M-scale results on The Stack (2000 steps, still training)}{table.3}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {4}Discussion}{4}{section.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Hebbian memory as the dominant mechanism.}{4}{section*.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Connection to fast weight programmers and linear attention.}{4}{section*.7}\protected@file@percent }
 \citation{gu2022efficiently}
 \citation{gu2024mamba}
 \citation{dao2024mamba2}
-\citation{schmidhuber1992learning}
-\citation{ba2016using}
-\citation{schlag2021linear}
-\citation{hopfield1982neural}
-\citation{ramsauer2021hopfield}
+\citation{schmidhuber1992learning,ba2016using,schlag2021linear}
 \citation{katharopoulos2020transformers}
 \citation{sun2023retentive}
 \citation{yang2024gated}
 \citation{peng2023rwkv}
+\citation{hopfield1982neural,ramsauer2021hopfield}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Learned per-layer parameters in the 100M Conv+Heb model. \textbf  {Left}: Memory strength $\alpha $ peaks in middle layers ($\sim $0.025) and drops at boundaries ($\sim $0.017). \textbf  {Right}: Decay half-life ($\log 2 / \log (1/\gamma )$) shows a timescale hierarchy---early layers retain memory longer ($\sim $120 tokens), later layers decay faster ($\sim $55 tokens).}}{4}{figure.3}\protected@file@percent }
+\newlabel{fig:learned}{{3}{4}{Learned per-layer parameters in the 100M Conv+Heb model. \textbf {Left}: Memory strength $\alpha $ peaks in middle layers ($\sim $0.025) and drops at boundaries ($\sim $0.017). \textbf {Right}: Decay half-life ($\log 2 / \log (1/\gamma )$) shows a timescale hierarchy---early layers retain memory longer ($\sim $120 tokens), later layers decay faster ($\sim $55 tokens)}{figure.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Discussion}{4}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Hebbian memory as the dominant mechanism}{4}{section*.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Connection to fast weight programmers and linear attention}{4}{section*.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Limitations}{4}{section*.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Related Work}{4}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{State space models}{4}{section*.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Associative memory and fast weights}{4}{section*.6}\protected@file@percent }
 \bibdata{references}
 \bibcite{ba2016using}{{1}{2016}{{Ba et~al.}}{{Ba, Hinton, Mnih, Leibo, and Ionescu}}}
-\@writefile{toc}{\contentsline {paragraph}{Why wider convolutions hurt.}{5}{section*.8}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Limitations.}{5}{section*.9}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {5}Related Work}{5}{section.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{State space models.}{5}{section*.10}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Fast weight programmers.}{5}{section*.11}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Associative memory.}{5}{section*.12}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Linear attention and gated variants.}{5}{section*.13}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{5}{section.6}\protected@file@percent }
 \bibcite{dao2024mamba2}{{2}{2024}{{Dao and Gu}}{{}}}
 \bibcite{gu2024mamba}{{3}{2024}{{Gu and Dao}}{{}}}
 \bibcite{gu2022efficiently}{{4}{2022}{{Gu et~al.}}{{Gu, Goel, and R{\'e}}}}
@@ -77,4 +62,5 @@
 \bibcite{vaswani2017attention}{{15}{2017}{{Vaswani et~al.}}{{Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez, Kaiser, and Polosukhin}}}
 \bibcite{yang2024gated}{{16}{2024}{{Yang et~al.}}{{Yang, Wang, Shen, Panda, and Kim}}}
 \bibstyle{plainnat}
-\gdef \@abspage@last{6}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{5}{section.6}\protected@file@percent }
+\gdef \@abspage@last{5}
