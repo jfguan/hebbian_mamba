@@ -208,6 +208,50 @@ class LinearBlock(nn.Module):
         return self.forward(x.unsqueeze(1)).squeeze(1), {}
 
 
+class ConvBlock(nn.Module):
+    """Linear backbone + depthwise conv. Local mixing, no SSM recurrence."""
+
+    def __init__(self, cfg: Config):
+        super().__init__()
+        D = cfg.d_model
+        E = cfg.expand
+        d_inner = E * D
+        self.d_inner = d_inner
+        self.d_conv = cfg.d_conv
+
+        self.proj = nn.Linear(D, d_inner, bias=False)
+        self.gate = nn.Linear(D, d_inner, bias=False)
+        self.conv1d = nn.Conv1d(
+            d_inner, d_inner, cfg.d_conv,
+            bias=True, groups=d_inner, padding=cfg.d_conv - 1,
+        )
+        self.out_proj = nn.Linear(d_inner, D, bias=False)
+
+    def forward(self, x):
+        B, L, D = x.shape
+        val = self.proj(x).transpose(1, 2)
+        val = self.conv1d(val)[:, :, :L].transpose(1, 2)
+        val = F.silu(val)
+        return self.out_proj(val * F.silu(self.gate(x)))
+
+    def step(self, x, state=None):
+        B = x.shape[0]
+        if state is None:
+            conv_state = x.new_zeros(B, self.d_inner, self.d_conv - 1)
+        else:
+            conv_state = state["conv_state"]
+
+        val = self.proj(x)
+        conv_input = torch.cat([conv_state, val.unsqueeze(-1)], dim=-1)
+        conv_state = conv_input[:, :, 1:]
+        val = (conv_input * self.conv1d.weight.squeeze(1)).sum(dim=-1) + self.conv1d.bias
+        val = F.silu(val)
+
+        gate = F.silu(self.gate(x))
+        y = self.out_proj(val * gate)
+        return y, {"conv_state": conv_state}
+
+
 def _memory_attend(out, proj_write, proj_read, decay, chunk_size, memory_alpha, write_alpha=None):
     """Chunkwise parallel Hebbian memory."""
     B, T, D = out.shape
@@ -284,6 +328,8 @@ class SSDLayer(nn.Module):
         backbone = getattr(cfg, "backbone", "ssd")
         if backbone == "linear":
             self.ssd = LinearBlock(cfg)
+        elif backbone == "conv":
+            self.ssd = ConvBlock(cfg)
         else:
             self.ssd = SSDBlock(cfg)
 

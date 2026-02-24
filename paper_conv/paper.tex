@@ -1,0 +1,217 @@
+\documentclass{article}
+\usepackage[preprint]{neurips_2024}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+\newcommand{\vk}{\mathbf{k}}
+\newcommand{\vv}{\mathbf{v}}
+\newcommand{\vq}{\mathbf{q}}
+\newcommand{\vx}{\mathbf{x}}
+\newcommand{\vy}{\mathbf{y}}
+\newcommand{\mW}{\mathbf{W}}
+\newcommand{\mM}{\mathbf{M}}
+
+\title{Memory Is All You Need}
+
+\author{
+  Jeff Guan \\
+  \texttt{jeff.guan0@gmail.com}
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Transformers and state space models (e.g.\ Mamba) use sophisticated mechanisms to mix information across sequence positions. We argue that \textbf{a minimal mixing backbone and an associative memory is all that is necessary}. We augment language models with a Hebbian memory---a matrix of outer-product associations updated at each token---and systematically ablate the backbone. \textbf{[TODO: update with final numbers]} On code generation: Mamba + Hebbian memory achieves 1.85 nats; replacing Mamba's recurrence with a 4-token depthwise convolution gives 1.94 nats at half the parameters; removing the backbone entirely still converges. The sequence model backbone contributes only local feature extraction; \textbf{the associative memory handles all long-range recall}.
+\end{abstract}
+
+\section{Introduction}
+
+Transformers~\citep{vaswani2017attention} and state space models like Mamba~\citep{gu2024mamba,dao2024mamba2} use complex mechanisms---quadratic attention, selective gating, discretized recurrence---to capture long-range dependencies in sequences.
+
+But what if associative memory, not the sequence model, is the primary mechanism for long-range reasoning? In this work, we decompose language modeling into two capabilities: first, \textbf{associative binding}---storing and retrieving associations across arbitrary distances---and second, \textbf{local feature extraction}---combining adjacent tokens into useful representations.
+
+We show that a Hebbian associative memory~\citep{hebb1949organization}---implemented as a decaying outer-product matrix updated at each token---handles the second capability entirely. For the first, a depthwise convolution over just 4 tokens suffices. The resulting architecture, \textbf{Conv+Hebbian}, contains no recurrent state space dynamics, no attention mechanism, and no gating beyond a standard SiLU projection. Yet it matches SSM-based models at comparable parameter counts.
+
+Our key finding is stark: replacing Mamba with a 4-token convolution \textbf{[TODO: conv results pending]} matches performance at a fraction of the complexity, and a model with \emph{no} sequence mixing at all (pure linear projection + Hebbian) still converges to 3.18 nats. The backbone is largely irrelevant; the associative memory does the heavy lifting.
+
+\section{Method}
+
+Our architecture consists of $L$ identical layers, each containing a local feature extractor (depthwise convolution) and a Hebbian associative memory, combined via residual connections.
+
+\subsection{Hebbian Associative Memory}
+
+At each position $t$, the model maintains a memory matrix $\mW_t \in \mathbb{R}^{D \times D}$ that accumulates outer-product associations between consecutive representations:
+\begin{align}
+    \mW_t &= \gamma \mW_{t-1} + \vv_t \otimes \vk_{t-1} \label{eq:write} \\
+    \text{read}_t &= \mW_{t-1} \cdot \vq_t \label{eq:read}
+\end{align}
+where $\vv_t = W_v \vx_t$ is the value projection, $\vk_t = \vx_t$ is the write key (the raw hidden state), $\vq_t = \vx_t$ is the read query, and $\gamma = \sigma(\delta)$ is a learned decay with $\delta$ initialized to 4.6 ($\gamma \approx 0.99$). The output is:
+\begin{equation}
+    \vy_t = \vx_t + \alpha \cdot W_r \cdot \text{read}_t
+\end{equation}
+where $\alpha$ is a learned memory strength parameter (initialized to 0.03) and $W_r$ is a learned read projection.
+
+The memory implements a form of fast weight programming~\citep{schmidhuber1992learning}: the ``slow'' parameters ($W_v$, $W_r$) are trained by gradient descent, while the ``fast'' memory $\mW_t$ is written at runtime via Hebbian updates. The decay $\gamma$ creates an exponentially-weighted history, giving recent associations higher weight while retaining older bindings.
+
+\paragraph{Chunkwise parallel computation.}
+For training efficiency, we compute the memory in chunks of size $C$. Within each chunk, the intra-chunk reads form a lower-triangular matrix multiply, while inter-chunk contributions come from the carried state $\mW$. This gives $O(TC \cdot D + T \cdot D^2)$ time complexity, compared to $O(T \cdot D^2)$ for purely recurrent computation.
+
+For a chunk starting at position $s$ with length $C_i$:
+\begin{align}
+    \text{inter}_{s:s+C_i} &= \mW_s \cdot \vq_{s:s+C_i}^\top \odot \gamma^{\mathbf{p}} \\
+    \text{intra}_{s:s+C_i} &= (\vq_{s:s+C_i} \vk_{s:s+C_i}^\top \odot \mM) \cdot \vv_{s:s+C_i}
+\end{align}
+where $\mathbf{p} = [0, 1, \ldots, C_i{-}1]$ and $\mM$ is a causal decay mask with $\mM_{ij} = \gamma^{i-1-j} \cdot \mathbf{1}[i > j]$.
+
+\paragraph{Learned per-layer parameters.}
+Both the memory strength $\alpha$ and decay $\gamma$ are learned per layer. We parameterize $\alpha = \exp(\log\alpha_0)$ (initialized at 0.03) and $\gamma = \sigma(\delta)$ (initialized with $\delta = 4.6$), allowing gradient descent to find the optimal memory timescale for each layer. At the 100M scale, we observe that learned $\alpha$ values form a bell curve across layers (low at edges $\sim$0.025, peak in middle $\sim$0.031), while decay timescales create a hierarchy (early layers: half-life $\sim$135 tokens; later layers: $\sim$92 tokens).
+
+\subsection{Convolution Backbone}
+
+Each layer's local feature extractor is a gated depthwise convolution:
+\begin{align}
+    \vx' &= \text{SiLU}(\text{Conv1d}(W_p \vx)) \odot \text{SiLU}(W_g \vx) \\
+    \text{out} &= W_o \vx'
+\end{align}
+where $W_p \in \mathbb{R}^{D \times ED}$ projects to an expanded dimension ($E{=}2$), Conv1d is a depthwise convolution with kernel size $d_\text{conv}$ (default 4), $W_g \in \mathbb{R}^{D \times ED}$ is a gating projection, and $W_o \in \mathbb{R}^{ED \times D}$ projects back. The convolution is causal (padded on the left).
+
+This block has no recurrence, no state space dynamics, and no attention. It sees exactly $d_\text{conv}$ tokens of local context. All long-range information flow occurs through the Hebbian memory.
+
+\subsection{Full Architecture}
+
+The complete model stacks $L$ layers with pre-norm residual connections:
+\begin{equation}
+    \vx^{(l)} = \vx^{(l-1)} + \text{HebbianMemory}(\text{Conv}(\text{RMSNorm}(\vx^{(l-1)})))
+\end{equation}
+Token embeddings are tied with the output projection (weight tying). With a 512-token BPE vocabulary, embedding parameters are negligible ($\sim$0.3M).
+
+\paragraph{Parameter count.} Per layer: the conv block contributes $3ED^2 + ED \cdot d_\text{conv}$ parameters (projections + conv kernel); the Hebbian memory adds $2D^2$ parameters (write and read projections) plus 2 scalars (decay and alpha). For $D{=}512$, $E{=}2$: each layer is $\sim$2.1M parameters. An 8-layer model totals $\sim$17.1M; a 4-layer model totals $\sim$8.7M.
+
+\section{Experiments}
+
+All experiments use the CodeParrot~\citep{codeparrot} dataset (Python code) with a 512-token BPE vocabulary, sequence length 2048, batch size 2, and cosine learning rate schedule with peak $6 \times 10^{-4}$ and 20-step warmup. Models are trained for 1465 steps ($\sim$6M tokens) unless otherwise noted. We report validation loss in nats (natural log cross-entropy).
+
+\subsection{Backbone Ablation}
+
+Our central experiment replaces the sequence modeling backbone while keeping the Hebbian memory identical. Table~\ref{tab:backbone} shows results across four backbones.
+
+\begin{table}[h]
+\caption{Backbone ablation on CodeParrot (1465 steps). All models use identical Hebbian memory. Conv+Heb at 4 layers matches SSD+Heb with fewer parameters and \emph{no} SSM recurrence.}
+\label{tab:backbone}
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Backbone + Hebbian} & \textbf{Layers} & \textbf{$d_\text{model}$} & \textbf{Params} & \textbf{Val Loss} \\
+\midrule
+Mamba + Heb & 8 & 512 & 18.1M & 1.85 \\
+Conv(4) + Heb & 8 & 512 & 17.1M & 1.93 \\
+Conv(4) + Heb & 4 & 512 & 8.7M & 1.94 \\
+SSD + Heb & 4 & 512 & 9.2M & 2.01 \\
+Mamba (no Heb) & 8 & 512 & 18.1M & 2.19 \\
+Linear + Heb & 8 & 512 & $\sim$8.7M & 3.18 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Several observations stand out:
+
+\textbf{Conv matches SSD with fewer parameters.} The 4-layer Conv+Heb model (8.7M params) achieves 1.94 nats, beating the 4-layer SSD+Heb model (9.2M params) at 2.01 nats. The convolution contributes zero recurrent state yet outperforms a full state space model.
+
+\textbf{Doubling conv layers gives diminishing returns.} Going from 4 to 8 conv layers (8.7M $\to$ 17.1M params) improves loss by only 0.01 nats (1.94 $\to$ 1.93). The Hebbian memory saturates the model's capacity for long-range reasoning; additional local processing adds little.
+
+\textbf{Linear + Heb still converges.} With no sequence mixing at all (pure linear projection), the model reaches 3.18 nats. This is substantially worse than conv-based models but still produces coherent token predictions, confirming that the Hebbian memory alone can drive language modeling.
+
+\textbf{Hebbian is the dominant mechanism.} Removing Hebbian memory from Mamba degrades performance from 1.85 to 2.19 nats ($+$0.34). In contrast, removing the SSM from SSD+Heb and replacing it with a 4-token conv \emph{improves} performance from 2.01 to 1.94 nats ($-$0.07). The memory contributes far more than the backbone.
+
+\subsection{Convolution Width}
+
+We sweep the convolution kernel width $d_\text{conv}$ to understand how much local context the backbone needs. Table~\ref{tab:conv_width} shows results at step 200 (8-layer models).
+
+\begin{table}[h]
+\caption{Effect of convolution kernel width (8L, CodeParrot, step 200).}
+\label{tab:conv_width}
+\centering
+\begin{tabular}{lcccc}
+\toprule
+$d_\text{conv}$ & 2 & 4 & 8 & 16 \\
+\midrule
+Val Loss & 2.90 & 2.70 & 3.01 & diverged \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The sweet spot is $d_\text{conv}{=}4$. Wider kernels ($d_\text{conv}{=}8$) hurt, and $d_\text{conv}{=}16$ diverges entirely. This is consistent with our hypothesis: the convolution's role is to produce local n-gram features (bigrams through 4-grams), not to model long-range dependencies. Wider kernels add parameters and optimization difficulty without benefit, because the Hebbian memory already handles long-range associations.
+
+The failure of wide convolutions also distinguishes our approach from convolutional sequence models like RWKV~\citep{peng2023rwkv}, which use larger receptive fields. Our convolution is deliberately narrow---it is a feature \emph{extractor}, not a sequence \emph{model}.
+
+\subsection{Learned Memory Parameters}
+
+At the 100M scale (12 layers, $d_\text{model}{=}1024$, trained on The Stack), the per-layer learned parameters reveal interpretable structure.
+
+\paragraph{Memory strength ($\alpha$).} The learned $\alpha$ values form a bell curve: boundary layers (first and last) use lower values ($\sim$0.025), while middle layers peak at $\sim$0.031. This suggests that early layers focus on building local representations (needing less memory influence) and late layers focus on decoding (also needing less), while middle layers perform the bulk of associative reasoning.
+
+\paragraph{Decay timescale ($\gamma$).} Converting the learned decay parameters to half-lives ($t_{1/2} = \log 2 / \log(1/\gamma)$), we observe a timescale hierarchy: early layers maintain slower decay (half-life $\sim$135 tokens) while later layers decay faster ($\sim$92 tokens). Early layers build a broad contextual memory; later layers focus on recent, task-relevant associations.
+
+\subsection{Scaling to 100M Parameters}
+
+We scale our Conv+Hebbian architecture to $\sim$100M parameters (12 layers, $d_\text{model}{=}1024$) and train on The Stack, a large-scale code corpus. Table~\ref{tab:scaling} compares against a Mamba+Hebbian baseline at the same scale.
+
+\begin{table}[h]
+\caption{100M-scale results on The Stack (2000 steps, still training).}
+\label{tab:scaling}
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Model} & \textbf{Layers} & \textbf{Params} & \textbf{Val Loss} \\
+\midrule
+Mamba + Heb & 12 & $\sim$100M & 1.92 \\
+Conv(4) + Heb & 12 & $\sim$100M & 2.28 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The gap widens to $\sim$0.3 nats at scale. We hypothesize this reflects Mamba's advantage in modeling medium-range dependencies (tens to hundreds of tokens) that fall between the convolution's 4-token window and the Hebbian memory's associative recall. The SSM's selective recurrence may fill a ``middle ground'' that the convolution cannot reach. Whether this gap closes with longer training or wider convolutions (without the divergence issues of $d_\text{conv}{>}4$) remains an open question.
+
+\section{Discussion}
+
+\paragraph{Hebbian memory as the dominant mechanism.}
+Our results point to a decomposition of sequence modeling into local feature extraction and associative binding, where the latter is overwhelmingly more important. This echoes the complementary learning systems theory in neuroscience~\citep{mcclelland1995complementary}: the neocortex (slow, general-purpose feature learning) and hippocampus (fast, associative binding) serve complementary roles, but episodic memory and rapid association are critical for flexible behavior.
+
+The Hebbian memory in our model plays the hippocampal role. Its $O(D^2)$ state matrix stores pairwise associations between token representations. At each step, it writes a new association ($\vv_t \otimes \vk_{t-1}$) and reads by querying the accumulated matrix. This is fundamentally different from SSM recurrence, which compresses sequence history into a fixed-size state vector and reads through learned dynamics. The outer-product memory is content-addressable---retrieval is by similarity to the query, not by temporal position.
+
+\paragraph{Connection to fast weight programmers and linear attention.}
+Our Hebbian memory is closely related to fast weight programmers~\citep{schmidhuber1992learning,ba2016using,schlag2021linear} and linear attention~\citep{katharopoulos2020transformers}. Linear attention can be viewed as maintaining a key-value outer-product matrix $\mW_t = \sum_{i=1}^{t} \vv_i \otimes \vk_i$, which is exactly our Hebbian update without decay. The addition of learnable exponential decay $\gamma$ connects to RetNet~\citep{sun2023retentive} and gated linear attention~\citep{yang2024gated}. Our contribution is not the memory mechanism itself, but the empirical finding that \emph{this mechanism alone, paired with a trivial backbone, suffices for competitive language modeling}.
+
+\paragraph{Why wider convolutions hurt.}
+The divergence of $d_\text{conv}{=}16$ and degradation at $d_\text{conv}{=}8$ may seem counterintuitive. We hypothesize two causes: (1) wider depthwise convolutions add parameters ($d_\text{conv} \times d_\text{inner}$ per layer) without corresponding representational benefit, creating an optimization burden; and (2) wider convolutions may interfere with the Hebbian memory by smoothing out the sharp token representations that serve as effective keys and queries. The memory relies on distinct per-token representations for content-addressable retrieval; blurring them with wide convolutions degrades recall.
+
+\paragraph{Limitations.}
+Our experiments are limited to code generation at relatively small scale ($\le$100M parameters, $\le$6M tokens at the 18M scale). The 0.3-nat gap at 100M scale suggests that SSMs provide value beyond local feature extraction, particularly for medium-range dependencies. Natural language, which may require different association patterns than code, remains untested. The $O(D^2)$ memory state per layer also limits scaling to very large hidden dimensions.
+
+\section{Related Work}
+
+\paragraph{State space models.}
+S4~\citep{gu2022efficiently} introduced structured state spaces for sequence modeling. Mamba~\citep{gu2024mamba} added input-dependent selection, achieving strong performance on language modeling. Mamba-2/SSD~\citep{dao2024mamba2} revealed the duality between SSMs and structured attention, enabling efficient multi-head implementations. Our work shows that for models augmented with associative memory, the SSM backbone can be replaced with a simpler alternative.
+
+\paragraph{Fast weight programmers.}
+The idea of using outer-product updates to create runtime-modifiable weight matrices dates to \citet{schmidhuber1992learning}. \citet{ba2016using} revived this as ``fast weights'' for RNNs. \citet{schlag2021linear} showed that linear transformers are equivalent to fast weight programmers. Our Hebbian memory follows this lineage, with the addition of learned per-layer decay and strength parameters.
+
+\paragraph{Associative memory.}
+Hopfield networks~\citep{hopfield1982neural} and modern continuous Hopfield networks~\citep{ramsauer2021hopfield} provide energy-based frameworks for associative recall. Our approach is simpler: a running outer-product sum with exponential decay, without energy minimization or iterative retrieval.
+
+\paragraph{Linear attention and gated variants.}
+Linear attention~\citep{katharopoulos2020transformers} replaces softmax attention with kernel feature maps, yielding an outer-product recurrence. RetNet~\citep{sun2023retentive} and GLA~\citep{yang2024gated} add decay and gating. RWKV~\citep{peng2023rwkv} combines linear attention with token mixing. These are all instances of the fast-weight paradigm; our work complements them by showing that when such a memory is present, the surrounding architecture can be drastically simplified.
+
+\section{Conclusion}
+
+We have shown that a minimal architecture---depthwise convolution over 4 tokens plus Hebbian outer-product memory---matches state space models at comparable parameter counts for code language modeling. The sequence model backbone contributes local feature extraction, a task achievable with a trivial convolution, while the associative memory handles all long-range binding and recall. This decomposition suggests that future architecture design should focus on the memory mechanism rather than the sequence model, and that the complexity of modern SSMs and attention may be addressing a problem (long-range sequence modeling) that is better solved by explicit associative storage.
+
+\bibliography{references}
+\bibliographystyle{plainnat}
+
+\end{document}

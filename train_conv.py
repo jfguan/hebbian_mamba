@@ -1,44 +1,42 @@
-"""Train HebbianMambaLoopSSD on codeparrot.
+"""Train HebbianConv on codeparrot.
 
 Usage:
-    uv run experiments/train_ssd.py
-    uv run experiments/train_ssd.py --tag ssd_test --steps 500
+    uv run train_conv.py
+    uv run train_conv.py --tag conv_test --steps 500
 """
 
 import argparse
 import json
 import math
 import os
-import sys
+import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import torch
-from model import Config
-from experiments.model_ssd import HebbianMambaLoopSSD
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import torch
 
-from train import cosine_lr, configure_optimizers, evaluate
+from model_conv import Config, HebbianConv
+from train import cosine_lr, configure_optimizers, evaluate, plot_losses
 
 
-def _plot_losses(history, tag, out_dir):
-    fig, ax = plt.subplots(figsize=(10, 5))
-    use_tokens = "tokens" in history[0]
-    xs = [h["tokens"] / 1e6 for h in history] if use_tokens else [h["step"] for h in history]
-    xlabel = "Training tokens (M)" if use_tokens else "Step"
-    ax.plot(xs, [h["train_loss"] for h in history], label="train", alpha=0.7)
-    val = [(h["tokens"] / 1e6 if use_tokens else h["step"], h["val_loss"])
-           for h in history if "val_loss" in h]
-    if val:
-        ax.plot(*zip(*val), "o-", label="val", markersize=4)
-    ax.set(xlabel=xlabel, ylabel="loss (nats)", title=f"Training — {tag}")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(os.path.join(out_dir, f"loss_{tag}.png"), dpi=150)
-    plt.close(fig)
+@torch.no_grad()
+def sample(model, encode, decode, device, prompt="", n=200, temperature=0.8):
+    model.eval()
+    states, tokens = None, []
+    prompt_ids = encode(prompt) if prompt else [0]
+    for tok_id in prompt_ids[:-1]:
+        token = torch.tensor([tok_id], dtype=torch.long, device=device)
+        _, states = model.step(token, states=states)
+    token = torch.tensor([prompt_ids[-1]], dtype=torch.long, device=device)
+    for _ in range(n):
+        logits, states = model.step(token, states=states)
+        token = torch.multinomial(
+            torch.softmax(logits / temperature, dim=-1), 1
+        ).squeeze(-1)
+        tokens.append(token.item())
+    model.train()
+    return prompt + decode(tokens)
 
 
 def main():
@@ -53,25 +51,10 @@ def main():
     p.add_argument("--ckpt-interval", type=int, default=500)
     p.add_argument("--n-layers", type=int, default=8)
     p.add_argument("--d-model", type=int, default=512)
-    p.add_argument("--d-state", type=int, default=16)
-    p.add_argument("--n-heads", type=int, default=None,
-                   help="Number of SSD heads (default: d_inner // 128)")
-    p.add_argument("--stack-loops", type=int, default=1,
-                   help="Number of times to run the looped layers (default: 1)")
-    p.add_argument("--loop-start", type=int, default=None,
-                   help="First looped layer index (default: 0)")
-    p.add_argument("--loop-end", type=int, default=None,
-                   help="One past last looped layer (default: n_layers)")
-    p.add_argument("--gate-init", type=float, default=-5.0,
-                   help="Initial value for loop gate (sigmoid applied)")
+    p.add_argument("--d-conv", type=int, default=4)
     p.add_argument("--memory-alpha", type=float, default=0.03)
-    p.add_argument("--loop-alpha", type=float, default=None,
-                   help="Memory alpha for loop passes > 0 (default: same as memory-alpha)")
-    p.add_argument("--dataset", type=str, default="code", choices=["code", "stack"])
-    p.add_argument("--backbone", type=str, default="ssd", choices=["ssd", "linear", "conv"])
-    p.add_argument("--d-conv", type=int, default=4, help="Conv kernel width (for conv backbone)")
     p.add_argument("--grad-accum", type=int, default=1)
-    p.add_argument("--tag", type=str, default="code_ssd")
+    p.add_argument("--tag", type=str, default="code_conv")
     p.add_argument("--resume", type=str, default=None)
     p.add_argument("--compile", action="store_true")
     args = p.parse_args()
@@ -87,10 +70,7 @@ def main():
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
-    if args.dataset == "stack":
-        from data_stack import load_dataset, DataLoader
-    else:
-        from data_code import load_dataset, DataLoader
+    from data_code import load_dataset, DataLoader
     ds = load_dataset()
     train_loader = DataLoader(ds["train"], args.batch_size, args.seq_len)
     val_loader = DataLoader(ds["val"], args.batch_size, args.seq_len)
@@ -98,31 +78,13 @@ def main():
     cfg = Config(
         vocab_size=ds["vocab_size"],
         d_model=args.d_model,
+        d_conv=args.d_conv,
         n_layers=args.n_layers,
-        d_state=args.d_state,
         memory_alpha=args.memory_alpha,
-        use_memory=True,
     )
-    # Attach SSD-specific fields to config (read via getattr in model)
-    if args.n_heads is not None:
-        cfg.n_heads = args.n_heads
-    cfg.stack_loops = args.stack_loops
-    cfg.gate_init = args.gate_init
-    cfg.loop_alpha = args.loop_alpha if args.loop_alpha is not None else args.memory_alpha
-    cfg.backbone = args.backbone
-    cfg.d_conv = args.d_conv
-    cfg.loop_start = args.loop_start if args.loop_start is not None else 0
-    cfg.loop_end = args.loop_end if args.loop_end is not None else args.n_layers
-
-    model = HebbianMambaLoopSSD(cfg).to(device)
+    model = HebbianConv(cfg).to(device)
     n_params = sum(p.numel() for p in model.parameters())
-
-    n_heads_actual = getattr(model.layers[0].ssd, "n_heads", 0)
-    if args.stack_loops > 1:
-        loop_desc = f"loop layers {cfg.loop_start}-{cfg.loop_end-1} x{args.stack_loops}"
-    else:
-        loop_desc = "no loops"
-    print(f"{n_params/1e6:.2f}M params | {loop_desc} | {n_heads_actual} heads | {device}")
+    print(f"{n_params/1e6:.2f}M params | {args.n_layers}L d={args.d_model} conv={args.d_conv} | {device}")
 
     if args.compile:
         print("Compiling model...")
@@ -137,8 +99,6 @@ def main():
         missing, unexpected = raw_model.load_state_dict(ckpt["model"], strict=False)
         if missing:
             print(f"  New params: {missing}")
-        if unexpected:
-            print(f"  Dropped: {unexpected}")
         if not missing and not unexpected and "optimizer" in ckpt:
             optimizer.load_state_dict(ckpt["optimizer"])
         start_step = ckpt.get("step", 0)
@@ -149,12 +109,11 @@ def main():
     grad_accum = args.grad_accum
     print(f"Steps {start_step} -> {total_steps} | B={args.batch_size}x{grad_accum} T={args.seq_len} lr={args.lr}")
 
-    out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
-    os.makedirs(out_dir, exist_ok=True)
-    log_path = os.path.join(out_dir, f"history_{args.tag}.jsonl")
+    os.makedirs("checkpoints", exist_ok=True)
+    log_path = f"checkpoints/history_{args.tag}.jsonl"
     log_file = open(log_path, "a" if args.resume else "w")
 
-    import time
+    step = start_step
     entry = {}
     try:
         for step in range(start_step, total_steps):
@@ -193,10 +152,10 @@ def main():
 
             if step > 0 and step % args.ckpt_interval == 0:
                 raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model
-                ckpt_path = os.path.join(out_dir, f"ckpt_{args.tag}_step{step}.pt")
+                ckpt_path = f"checkpoints/ckpt_{args.tag}_step{step}.pt"
                 torch.save(
                     {"model": raw_model.state_dict(), "optimizer": optimizer.state_dict(),
-                     "config": cfg, "step": step, "model_class": "HebbianMambaLoopSSD"},
+                     "config": cfg, "step": step, "model_class": "HebbianConv"},
                     ckpt_path,
                 )
                 print(f"  -> {ckpt_path}", flush=True)
@@ -209,18 +168,21 @@ def main():
 
     raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model
     vl = evaluate(model, val_loader, device)
-    log_file.write(json.dumps({"step": step, "train_loss": entry["train_loss"], "val_loss": vl, "tokens": entry.get("tokens", 0)}) + "\n")
+    log_file.write(json.dumps({"step": step, "train_loss": entry.get("train_loss", 0), "val_loss": vl, "tokens": entry.get("tokens", 0)}) + "\n")
     log_file.close()
     print(f"\nFinal val loss: {vl:.4f} | ppl {math.exp(vl):.2f}")
 
-    final_path = os.path.join(out_dir, f"model_{args.tag}.pt")
+    prompt = 'def fizzbuzz(n):\n    """Print 1 to n; Fizz for multiples of 3, Buzz for 5, FizzBuzz for both."""\n'
+    print(f"Sample:\n{sample(raw_model, ds['encode'], ds['decode'], device, prompt=prompt, n=300)}")
+
+    final_path = f"checkpoints/model_{args.tag}.pt"
     torch.save(
         {"model": raw_model.state_dict(), "optimizer": optimizer.state_dict(),
-         "config": cfg, "step": step + 1, "model_class": "HebbianMambaLoopSSD"},
+         "config": cfg, "step": step + 1, "model_class": "HebbianConv"},
         final_path,
     )
     history = [json.loads(line) for line in open(log_path)]
-    _plot_losses(history, args.tag, out_dir)
+    plot_losses(history, args.tag)
     print(f"Saved {final_path} + {log_path}")
 
 
