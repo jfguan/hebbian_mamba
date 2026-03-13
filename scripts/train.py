@@ -1,10 +1,10 @@
 """Unified training script.
 
 Usage:
-    uv run train.py configs/hebbian_small.yaml
-    uv run train.py configs/hebbian_mamba_100M.yaml --dataset stack --tag my_run
-    uv run train.py configs/hebbian_100M.yaml --resume checkpoints/ckpt_hebbian_100M_step2000.pt
-    uv run train.py configs/mamba_100M.yaml --compile
+    uv run scripts/train.py models/configs/hebbian_17M.yaml
+    uv run scripts/train.py models/configs/hebbian_mamba_100M.yaml --dataset stack --tag my_run
+    uv run scripts/train.py models/configs/hebbian_100M.yaml --resume checkpoints/ckpt_hebbian_100M_step2000.pt
+    uv run scripts/train.py models/configs/mamba_100M.yaml --compile
 """
 
 import argparse
@@ -35,8 +35,8 @@ def build_model(cfg):
         from models.mamba import Config, Mamba
         model_cfg = Config(**{k: v for k, v in cfg.items() if hasattr(Config, k)})
         return Mamba(model_cfg), model_cfg, "Mamba"
-    elif model_type == "hebbian":
-        from models.hebbian import Config, HebbianConv
+    elif model_type == "hebbian_minimal":
+        from models.hebbian_minimal import Config, HebbianConv
         model_cfg = Config(**{k: v for k, v in cfg.items() if hasattr(Config, k)})
         return HebbianConv(model_cfg), model_cfg, "HebbianConv"
     else:
