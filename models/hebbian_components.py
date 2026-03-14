@@ -1,7 +1,8 @@
-"""Hebbian associative memory block.
+"""Reusable components for Hebbian models.
 
-Memory: W_t = γW_{t-1} + v_t⊗k_{t-1}, read_t = W_{t-1}·q_t
-Training uses O(TC·D + T·D²) chunkwise parallel form; inference uses O(D²) recurrent form.
+- CausalConv: causal depthwise conv1d for local token mixing
+- GatedMLP: SwiGLU gated projections for channel mixing
+- HebbianBlock: outer-product associative memory for long-range binding
 """
 
 import torch
@@ -9,11 +10,54 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class HebbianBlock(nn.Module):
-    """Hebbian outer-product associative memory.
+class CausalConv(nn.Module):
+    """Causal depthwise conv1d with parallel and recurrent forms."""
 
-    Maintains a D×D matrix of associations updated at each token.
-    Supports both chunkwise parallel (training) and recurrent (inference) forms.
+    def __init__(self, d: int, d_conv: int = 4):
+        super().__init__()
+        self.d = d
+        self.d_conv = d_conv
+        self.conv1d = nn.Conv1d(d, d, d_conv, bias=True, groups=d, padding=d_conv - 1)
+
+    def forward(self, x):
+        """(B, L, D) -> (B, L, D)."""
+        return self.conv1d(x.transpose(1, 2))[:, :, :x.size(1)].transpose(1, 2)
+
+    def step(self, x, state=None):
+        """(B, D) -> (B, D), state."""
+        if state is None:
+            state = x.new_zeros(x.shape[0], self.d, self.d_conv - 1)
+        conv_input = torch.cat([state, x.unsqueeze(-1)], dim=-1)
+        state = conv_input[:, :, 1:]
+        assert self.conv1d.bias is not None
+        out = (conv_input * self.conv1d.weight.squeeze(1)).sum(-1) + self.conv1d.bias
+        return out, state
+
+
+class GatedMLP(nn.Module):
+    """SwiGLU gated projections: up-project, gate, down-project."""
+
+    def __init__(self, d_model: int, expand: int = 2):
+        super().__init__()
+        d_inner = expand * d_model
+        self.d_inner = d_inner
+        self.proj = nn.Linear(d_model, d_inner, bias=False)
+        self.gate = nn.Linear(d_model, d_inner, bias=False)
+        self.out_proj = nn.Linear(d_inner, d_model, bias=False)
+
+    def project_up(self, x):
+        """(B, *, d_model) -> (B, *, d_inner)."""
+        return self.proj(x)
+
+    def forward(self, x, val):
+        """Gate and project down. x: original input for gate, val: transformed value in d_inner space."""
+        return self.out_proj(F.silu(val) * F.silu(self.gate(x)))
+
+
+class HebbianBlock(nn.Module):
+    """D*D associative memory: W_t = γW_{t-1} + v_t⊗k_{t-1}, read_t = W_t·q_t.
+
+    Chunkwise parallel O(TC·D + T·D²) for training, recurrent O(D²) for inference.
     """
 
     def __init__(self, d_model: int, chunk_size: int = 64, memory_alpha: float = 0.03,
@@ -36,13 +80,11 @@ class HebbianBlock(nn.Module):
         return self.log_alpha.exp()
 
     def forward(self, out):
-        """Chunkwise parallel Hebbian memory. O(TC·D + T·D²) time.
+        """Chunkwise parallel form.
 
-        Args:
-            out: (B, T, D) hidden states from backbone.
+        out: (B, T, D) hidden states.
 
-        Returns:
-            (B, T, D) hidden states augmented with memory reads.
+        returns: (B, T, D) augmented with memory reads.
         """
         B, T, D = out.shape
         C = self.chunk_size
@@ -86,14 +128,12 @@ class HebbianBlock(nn.Module):
         return out + self.alpha * self.proj_read(reads).to(out.dtype)
 
     def step(self, out, state=None):
-        """Recurrent form: W ← γW + v⊗k, read = W·q. O(D²) per step.
+        """Recurrent form.
 
-        Args:
-            out: (B, D) hidden state from backbone.
-            state: dict with 'W' and 'r_prev', or None.
+        out: (B, D) hidden state.
+        state: dict with 'W' and 'r_prev', or None.
 
-        Returns:
-            (B, D) augmented hidden state, new state dict.
+        returns: (B, D) augmented, new state dict.
         """
         B, D = out.shape
 

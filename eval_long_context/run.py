@@ -7,7 +7,7 @@ Usage:
     uv run eval_long_context/eval_long.py --models checkpoints/model_codeparrot_hebbian.pt checkpoints/model_codeparrot_baseline_mamba.pt --dataset code_parrot --tokens 16384
 """
 
-import argparse, sys
+import argparse
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -17,20 +17,6 @@ import matplotlib.pyplot as plt
 
 from models.hebbian_mamba import HebbianMamba
 
-
-class Tee:
-    def __init__(self, path):
-        self.f = open(path, "w", buffering=1)  # line-buffered: flushes after every \n
-        self.stdout = sys.stdout
-    def write(self, s):
-        self.stdout.write(s)
-        self.f.write(s)
-    def flush(self):
-        self.stdout.flush()
-        self.f.flush()
-    def close(self):
-        sys.stdout = self.stdout  # restore before closing so atexit flush doesn't error
-        self.f.close()
 
 
 def load_model(path, device):
@@ -124,16 +110,14 @@ def main():
 
     tokens_k = round(args.tokens / 1000)
     stem = f"eval_long_context/{tokens_k}k_{args.dataset}_{size_tag}"
-    log_path = args.out or f"{stem}.txt"
-    png_path = log_path.replace(".txt", ".png")
-    sys.stdout = Tee(log_path)
+    png_path = f"{stem}.png"
 
     device = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device} | {args.tokens} tokens x {args.windows} windows\n")
 
     ds = load_dataset(args.dataset)
     rng = np.random.default_rng(42)
-    max_start = len(ds["val"]) - args.tokens - 1
+    max_start = len(ds.val) - args.tokens - 1
     starts = sorted(rng.choice(max_start, size=args.windows, replace=False))
 
     N, seg = args.tokens, args.segment
@@ -147,7 +131,7 @@ def main():
     all_losses = np.zeros((len(models), args.windows, n_segs))
 
     for w_i, start in enumerate(starts):
-        tokens = ds["val"][start : start + N + 1].tolist()
+        tokens = ds.val[start : start + N + 1].tolist()
         print(f"Window {w_i+1}/{args.windows}: val[{start}:{start+N}]")
         for m_i, (model, label, _) in enumerate(models):
             losses = run_model(model, tokens, device)
@@ -173,8 +157,6 @@ def main():
         print(f"  {label}")
 
     plot(mean_loss, seg_labels, short_names, png_path)
-    print(f"\nLog: {log_path}")
-    sys.stdout.close()
 
 
 if __name__ == "__main__":

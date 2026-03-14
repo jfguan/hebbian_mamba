@@ -79,7 +79,7 @@ def main():
 
     prompt = args.prompt if args.prompt is not None else PROMPTS.get(args.dataset, "")
     print("=" * 60)
-    print(sample(model, ds["encode"], ds["decode"], prompt, args.n, args.temp, device))
+    print(sample(model, ds.encode, ds.decode, prompt, args.n, args.temp, device))
     print("=" * 60)
 
 

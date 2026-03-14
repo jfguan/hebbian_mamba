@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from mambapy.mamba import MambaBlock, MambaConfig as MambaCfg, RMSNorm
 
-from models.hebbian_block import HebbianBlock
+from models.hebbian_components import HebbianBlock
 
 
 @dataclass

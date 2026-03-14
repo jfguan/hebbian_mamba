@@ -113,11 +113,11 @@ def main():
     from data import load_dataset, DataLoader
 
     ds = load_dataset()
-    train_loader = DataLoader(ds["train"], args.batch_size, args.seq_len)
-    val_loader = DataLoader(ds["val"], args.batch_size, args.seq_len)
+    train_loader = DataLoader(ds.train, args.batch_size, args.seq_len)
+    val_loader = DataLoader(ds.val, args.batch_size, args.seq_len)
 
     cfg = Config(
-        vocab_size=ds["vocab_size"],
+        vocab_size=ds.vocab_size,
         d_model=args.d_model,
         d_conv=args.d_conv,
         n_layers=args.n_layers,

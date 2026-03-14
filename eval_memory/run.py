@@ -155,7 +155,7 @@ def main():
 
     # Pick random non-overlapping windows from val
     rng = np.random.default_rng(42)
-    max_start = len(ds["val"]) - N - 1
+    max_start = len(ds.val) - N - 1
     starts = sorted(rng.choice(max_start, size=n_windows, replace=False))
 
     # Collect per-segment deltas across windows
@@ -164,7 +164,7 @@ def main():
     last_w_norms, last_loss_upd, last_loss_frz = None, None, None
 
     for w_i, start in enumerate(starts):
-        tokens = ds["val"][start : start + N + 1].tolist()
+        tokens = ds.val[start : start + N + 1].tolist()
         print(f"\nWindow {w_i+1}/{n_windows}: val[{start}:{start+N}]")
 
         w_norms, loss_upd, loss_frz = run_inference(model, tokens, device)

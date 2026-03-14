@@ -203,11 +203,12 @@ def main():
     # Data
     from data import load_dataset, DataLoader
     ds = load_dataset(dataset)
-    train_loader = DataLoader(ds["train"], batch_size, seq_len)
-    val_loader = DataLoader(ds["val"], batch_size, seq_len)
+    print(f"Train: {len(ds.train):,} tokens | Val: {len(ds.val):,} tokens")
+    train_loader = DataLoader(ds.train, batch_size, seq_len)
+    val_loader = DataLoader(ds.val, batch_size, seq_len)
 
     # Model
-    cfg["vocab_size"] = ds["vocab_size"]
+    cfg["vocab_size"] = ds.vocab_size
     model_type = cfg["model"]  # keep for printing
     model, model_cfg, model_class = build_model(cfg)
     model = model.to(device)
@@ -302,9 +303,8 @@ def main():
     log_file.close()
     print(f"\nFinal val loss: {vl:.4f} | ppl {math.exp(vl):.2f}")
 
-    if "encode" in ds and "decode" in ds:
-        prompt = "def fizzbuzz(n):\n" if dataset in ("code_parrot", "the_stack") else ""
-        print(f"Sample:\n{sample(raw_model, ds['encode'], ds['decode'], device, prompt=prompt, n=300)}")
+    prompt = "def fizzbuzz(n):\n" if dataset in ("code_parrot", "the_stack") else ""
+    print(f"Sample:\n{sample(raw_model, ds.encode, ds.decode, device, prompt=prompt, n=300)}")
 
     torch.save(
         {"model": raw_model.state_dict(), "optimizer": optimizer.state_dict(),
