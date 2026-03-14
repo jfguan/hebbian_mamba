@@ -117,11 +117,13 @@ def plot_capacity(results, path, d_model, n_vals):
 
 
 def train(model, device, vocab_size, steps=500):
+    """Train on random KV recall batches, only backprop on value predictions."""
     opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
     for step in range(steps):
         x, tgt, mask = make_batch(64, TRAIN_PAIRS, device)
         logits = model(x)[:, :-1]
 
+        # masked loss: only penalize value predictions in the query half
         loss = (
             F.cross_entropy(
                 logits.reshape(-1, vocab_size), tgt.reshape(-1), reduction="none"
@@ -141,13 +143,14 @@ def train(model, device, vocab_size, steps=500):
             print(f"  step {step:3d}  loss={loss.item():.4f}  recall={acc.item():.1%}")
 
 
-def eval_sweep(model, device):
-    eval_pairs = [2, 4, 8, 12, 16, 24, 32, 48, 64, 80, 96, 112, 128]
-    results = {}
+def sweep(model, device):
+    """Measure recall accuracy across increasing numbers of KV pairs."""
     model.eval()
     print("capacity sweep:")
+    results = {}
     with torch.no_grad():
-        for p in eval_pairs:
+        for p in [2, 4, 8, 12, 16, 24, 32, 48, 64, 80, 96, 112, 128]:
+            # average over 20 random batches per pair count
             accs = []
             for _ in range(20):
                 x, tgt, mask = make_batch(64, p, device)
@@ -173,5 +176,5 @@ if __name__ == "__main__":
     )
 
     train(model, device, vocab_size)
-    results = eval_sweep(model, device)
+    results = sweep(model, device)
     plot_capacity(results, "eval_synthetic_recall/capacity.png", d_model=64, n_vals=n_vals)

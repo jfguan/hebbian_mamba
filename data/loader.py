@@ -1,20 +1,5 @@
 from __future__ import annotations
 
-"""Unified dataset loader for hebbian-language.
-
-Supports three datasets:
-    - "pg19"  : Project Gutenberg long-form prose (emozilla/pg19)
-    - "code_parrot" : Python code from codeparrot-clean
-    - "the_stack"   : Multilingual code from The Stack (bigcode/the-stack-dedup)
-
-Usage:
-    from data import load_dataset, DataLoader
-
-    ds = load_dataset("pg19")          # or "code_parrot" or "the_stack"
-    loader = DataLoader(ds.train, batch_size=32, seq_len=256)
-    x, y = loader.batch()
-"""
-
 import json
 import os
 from collections.abc import Callable, Iterator
@@ -27,9 +12,6 @@ import numpy.typing as npt
 import torch
 
 
-DATA_DIR = os.path.dirname(os.path.abspath(__file__))
-
-
 @dataclass
 class DatasetConfig:
     cache_dir: str
@@ -37,35 +19,29 @@ class DatasetConfig:
     train_chars: int
     val_chars: int
     bpe_train_chars: int
-    stream: Callable[[int, int], str]  # (char_target, seed) -> text
+    stream: Callable[[int, str, int], str]  # (char_target, split, seed) -> text
 
 
-def _stream_pg19(char_target: int, seed: int) -> str:
-    # PG-19 uses "validation" not "val"
-    split = "train" if seed == 42 else "validation"
-    print(f"Streaming PG-19 {split} books...")
+def _stream_pg19(char_target: int, split: str, seed: int) -> str:
+    # PG-19 uses "validation" not "val" on HuggingFace
+    hf_split = "validation" if split == "val" else split
+    ds = hf_load("emozilla/pg19", split=hf_split, streaming=True)
 
-    ds = hf_load("emozilla/pg19", split=split, streaming=True)
     texts = (row["text"] for row in ds)
+    return _collect_chunks(texts, char_target)
 
-    return _collect_chunks(texts, char_target, label=split, unit="books", log_every=50)
 
-
-def _stream_code(char_target: int, seed: int) -> str:
-    print("Streaming codeparrot-clean Python...")
-
+def _stream_code(char_target: int, split: str, seed: int) -> str:
     ds = hf_load("codeparrot/codeparrot-clean", split="train", streaming=True)
     ds = ds.shuffle(seed=seed, buffer_size=10_000)
+
     texts = _filter_by_length(ds, "content", min_chars=4096)
+    return _collect_chunks(texts, char_target)
 
-    return _collect_chunks(texts, char_target, label="", unit="files", log_every=200)
 
-
-def _stream_stack(char_target: int, seed: int) -> str:
-    languages = ["python", "javascript", "typescript", "java", "c", "cpp", "rust", "go"]
-    print(f"Streaming The Stack ({', '.join(languages)}, files >= 32,000 chars)...")
-
+def _stream_stack(char_target: int, split: str, seed: int) -> str:
     streams = []
+    languages = ["python", "javascript", "typescript", "java", "c", "cpp", "rust", "go"]
     for lang in languages:
         ds = hf_load(
             "bigcode/the-stack-dedup",
@@ -77,44 +53,21 @@ def _stream_stack(char_target: int, seed: int) -> str:
 
     combined = interleave_datasets(streams, seed=seed)
     texts = _filter_by_length(combined, "content", min_chars=32_000)
-
-    return _collect_chunks(
-        texts,
-        char_target,
-        label="",
-        unit="files",
-        log_every=100,
-        fmt_total=lambda t: f"{t / 1e6:.1f}M",
-    )
+    return _collect_chunks(texts, char_target)
 
 
-def _collect_chunks(
-    texts: Iterator[str],
-    char_target: int,
-    *,
-    label: str = "",
-    unit: str = "items",
-    log_every: int = 100,
-    fmt_total: Callable[[int], str] | None = None,
-) -> str:
+def _collect_chunks(texts: Iterator[str], char_target: int) -> str:
     """Accumulate text chunks from an iterator until char_target is reached."""
-
-    def _default_fmt(t: int) -> str:
-        return f"{t:,}"
-
-    if fmt_total is None:
-        fmt_total = _default_fmt
-    prefix = f"  {label}: " if label else "  "
     chunks, total, n = [], 0, 0
     for text in texts:
         chunks.append(text)
         total += len(text)
         n += 1
-        if n % log_every == 0:
-            print(f"{prefix}{n} {unit}, {fmt_total(total)} chars...", flush=True)
+        if n % 100 == 0:
+            print(f"  {n} items, {total:,} chars...", flush=True)
         if total >= char_target:
             break
-    print(f"{prefix}{n} {unit}, {fmt_total(total)} chars (done)")
+    print(f"  {n} items, {total:,} chars (done)")
     return "\n\n".join(chunks)
 
 
@@ -124,6 +77,8 @@ def _filter_by_length(dataset: Any, field: str, min_chars: int) -> Iterator[str]
         if len(row[field]) >= min_chars:
             yield row[field]
 
+
+DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DATASETS: dict[str, DatasetConfig] = {
     "pg19": DatasetConfig(
@@ -211,8 +166,8 @@ def _load_cached_dataset(cfg: DatasetConfig, name: str) -> Dataset | None:
 
 def _download_dataset(cfg: DatasetConfig) -> Dataset:
     # Stream text from HuggingFace
-    train_text = cfg.stream(cfg.train_chars, 42)
-    val_text = cfg.stream(cfg.val_chars, 1337)
+    train_text = cfg.stream(cfg.train_chars, "train", seed=42)
+    val_text = cfg.stream(cfg.val_chars, "val", seed=1337)
 
     # Train BPE tokenizer on subset of training text
     tokenizer_path = os.path.join(cfg.cache_dir, "tokenizer.json")
