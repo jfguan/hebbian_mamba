@@ -17,11 +17,10 @@ class HebbianBlock(nn.Module):
     """
 
     def __init__(self, d_model: int, chunk_size: int = 64, memory_alpha: float = 0.03,
-                 learned_alpha: bool = True, dual_memory: bool = False):
+                 learned_alpha: bool = True):
         super().__init__()
         self.d_model = d_model
         self.chunk_size = chunk_size
-        self.dual_memory = dual_memory
 
         self.proj_write = nn.Linear(d_model, d_model, bias=False)
         self.proj_read = nn.Linear(d_model, d_model, bias=False)
@@ -31,9 +30,6 @@ class HebbianBlock(nn.Module):
             self.log_alpha = nn.Parameter(torch.tensor(memory_alpha).log())
         else:
             self.register_buffer("log_alpha", torch.tensor(memory_alpha).log())
-
-        if dual_memory:
-            self.decay_slow = nn.Parameter(torch.tensor(6.9))  # σ(6.9) ≈ 0.999
 
     @property
     def alpha(self):
@@ -60,12 +56,7 @@ class HebbianBlock(nn.Module):
         rk = out32
 
         W = out32.new_zeros(B, D, D)
-        W_slow = out32.new_zeros(B, D, D) if self.dual_memory else None
         reads_list = []
-
-        if self.dual_memory:
-            gamma_slow = torch.sigmoid(self.decay_slow)
-            log_gamma_slow = gamma_slow.log()
 
         for start in range(0, T, C):
             end = min(start + C, T)
@@ -85,34 +76,21 @@ class HebbianBlock(nn.Module):
             M = torch.exp(diffs * log_gamma) * causal
             intra = torch.bmm(S * M, v_c)
 
-            chunk_reads = inter + intra
-
-            if self.dual_memory:
-                inter_s = torch.matmul(W_slow, rk_c.transpose(1, 2)).transpose(1, 2)
-                inter_s = inter_s * (gamma_slow ** p)[None, :, None]
-                M_slow = torch.exp(diffs * log_gamma_slow) * causal
-                intra_s = torch.bmm(S * M_slow, v_c)
-                chunk_reads = chunk_reads + inter_s + intra_s
-
-            reads_list.append(chunk_reads)
+            reads_list.append(inter + intra)
 
             # Advance W: γ^Ci · W + Σ_l γ^(Ci-1-l) · v[l] ⊗ wk[l]
             gw = (gamma ** (Ci - 1 - p))[None, :, None]
             W = gamma ** Ci * W + torch.bmm((v_c * gw).transpose(1, 2), wk_c)
-            if self.dual_memory:
-                gw_s = (gamma_slow ** (Ci - 1 - p))[None, :, None]
-                W_slow = gamma_slow ** Ci * W_slow + torch.bmm((v_c * gw_s).transpose(1, 2), wk_c)
 
         reads = torch.cat(reads_list, dim=1)
-        alpha = self.alpha / 2 if self.dual_memory else self.alpha
-        return out + alpha * self.proj_read(reads).to(out.dtype)
+        return out + self.alpha * self.proj_read(reads).to(out.dtype)
 
     def step(self, out, state=None):
         """Recurrent form: W ← γW + v⊗k, read = W·q. O(D²) per step.
 
         Args:
             out: (B, D) hidden state from backbone.
-            state: dict with 'W', 'r_prev' (and 'W_slow' if dual_memory), or None.
+            state: dict with 'W' and 'r_prev', or None.
 
         Returns:
             (B, D) augmented hidden state, new state dict.
@@ -122,26 +100,16 @@ class HebbianBlock(nn.Module):
         if state is None:
             W = out.new_zeros(B, D, D)
             r_prev = out.new_zeros(B, D)
-            W_slow = out.new_zeros(B, D, D) if self.dual_memory else None
         else:
             W = state["W"]
             r_prev = state["r_prev"]
-            W_slow = state.get("W_slow") if self.dual_memory else None
 
         gamma = torch.sigmoid(self.decay)
         write = torch.einsum("bi,bj->bij", self.proj_write(out), r_prev)
         read = torch.einsum("bij,bj->bi", W, out)
         W = gamma * W + write
 
-        if self.dual_memory:
-            gamma_slow = torch.sigmoid(self.decay_slow)
-            read = read + torch.einsum("bij,bj->bi", W_slow, out)
-            W_slow = gamma_slow * W_slow + write
-
-        alpha = self.alpha / 2 if self.dual_memory else self.alpha
-        augmented = out + alpha * self.proj_read(read)
+        augmented = out + self.alpha * self.proj_read(read)
 
         new_state = {"W": W, "r_prev": out}
-        if self.dual_memory:
-            new_state["W_slow"] = W_slow
         return augmented, new_state

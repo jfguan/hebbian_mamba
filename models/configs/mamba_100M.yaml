@@ -2,7 +2,7 @@
 model: mamba
 tag: mamba_100M
 
-dataset: code
+dataset: code_parrot
 
 # Model
 d_model: 1024

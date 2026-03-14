@@ -1,4 +1,7 @@
-data/
+data/pg19/
+data/codeparrot/
+data/the_stack/
+data/__pycache__/
 .DS_Store
 __pycache__/
 .venv/

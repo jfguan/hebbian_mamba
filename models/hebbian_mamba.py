@@ -22,7 +22,6 @@ class Config:
     d_conv: int = 4
     expand: int = 2
     n_layers: int = 8
-    dual_memory: bool = False
     memory_alpha: float = 0.03
     chunk_size: int = 64
 
@@ -41,7 +40,6 @@ class HebbianMambaLayer(nn.Module):
             chunk_size=cfg.chunk_size,
             memory_alpha=cfg.memory_alpha,
             learned_alpha=False,
-            dual_memory=cfg.dual_memory,
         )
 
     def forward(self, x):

@@ -303,7 +303,7 @@ def main():
     print(f"\nFinal val loss: {vl:.4f} | ppl {math.exp(vl):.2f}")
 
     if "encode" in ds and "decode" in ds:
-        prompt = "def fizzbuzz(n):\n" if dataset in ("code", "stack") else ""
+        prompt = "def fizzbuzz(n):\n" if dataset in ("code_parrot", "the_stack") else ""
         print(f"Sample:\n{sample(raw_model, ds['encode'], ds['decode'], device, prompt=prompt, n=300)}")
 
     torch.save(

@@ -133,6 +133,7 @@ class HebbianLayer(nn.Module):
         val = self.proj(normed)
         conv_input = torch.cat([conv_st, val.unsqueeze(-1)], dim=-1)
         conv_st = conv_input[:, :, 1:]
+        assert self.conv1d.bias is not None
         val = F.silu(
             (conv_input * self.conv1d.weight.squeeze(1)).sum(-1) + self.conv1d.bias
         )

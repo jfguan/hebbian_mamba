@@ -127,6 +127,7 @@ def main():
     n_params = sum(p.numel() for p in model.parameters())
     print(f"{n_params / 1e6:.1f}M params | {args.n_layers}L d={args.d_model} | {device}")
 
+    raw_model = model
     if args.compile:
         print("Compiling model...")
         model = torch.compile(model)
@@ -136,7 +137,6 @@ def main():
     start_step = 0
     if args.resume:
         ckpt = torch.load(args.resume, map_location=device, weights_only=False)
-        raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model
         raw_model.load_state_dict(ckpt["model"])
         if "optimizer" in ckpt:
             optimizer.load_state_dict(ckpt["optimizer"])
@@ -180,7 +180,7 @@ def main():
                 loss.backward()
                 loss_accum += loss.item()
 
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_(raw_model.parameters(), 1.0)
             optimizer.step()
 
             dt = time.time() - t0
@@ -200,7 +200,7 @@ def main():
                 print(f"  val loss {vl:.4f} {status}", flush=True)
 
             if step > 0 and step % args.ckpt_interval == 0:
-                raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model
+
                 ckpt_path = f"{ckpt_dir}/ckpt_{args.tag}_step{step}.pt"
                 torch.save(
                     {
@@ -219,7 +219,7 @@ def main():
     except KeyboardInterrupt:
         print(f"\nStopped at step {step}.")
 
-    raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model
+
     vl = evaluate(model, val_loader, device)
     log_file.write(
         json.dumps({"step": step, "train_loss": entry.get("train_loss", 0), "val_loss": vl, "tokens": entry.get("tokens", 0)})

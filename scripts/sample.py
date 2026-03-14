@@ -12,7 +12,7 @@ from models.hebbian_mamba import HebbianMamba
 
 
 PROMPTS = {
-    "code":  'def fizzbuzz(n):\n    """Print 1 to n; Fizz for multiples of 3, Buzz for 5, FizzBuzz for both."""\n',
+    "code_parrot": 'def fizzbuzz(n):\n    """Print 1 to n; Fizz for multiples of 3, Buzz for 5, FizzBuzz for both."""\n',
     "prose": "",
 }
 
@@ -46,7 +46,7 @@ def main():
     p.add_argument("--prompt", type=str, default=None,
                    help="Custom prompt (overrides default fizzbuzz/prose prompt)")
     p.add_argument("--dataset", type=str, default=None,
-                   choices=["code", "prose", "stack"],
+                   choices=["code_parrot", "prose", "the_stack"],
                    help="Dataset for tokenizer (inferred from checkpoint name if omitted)")
     p.add_argument("--n",    type=int,   default=400)
     p.add_argument("--temp", type=float, default=0.8)
@@ -56,9 +56,9 @@ def main():
     if args.dataset is None:
         name = args.checkpoint.lower()
         if "stack" in name:
-            args.dataset = "stack"
+            args.dataset = "the_stack"
         elif "code" in name:
-            args.dataset = "code"
+            args.dataset = "code_parrot"
         else:
             args.dataset = "prose"
 

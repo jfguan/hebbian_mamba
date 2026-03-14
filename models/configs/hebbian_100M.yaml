@@ -2,7 +2,7 @@
 model: hebbian_minimal
 tag: hebbian_100M
 
-dataset: stack
+dataset: the_stack
 
 # Model
 d_model: 1024

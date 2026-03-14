@@ -4,7 +4,7 @@ Runs all models on the same val windows at any context length.
 W is always updating (normal inference) for hebbian models.
 
 Usage:
-    uv run eval_long_context/eval_long.py --models checkpoints/model_codeparrot_hebbian.pt checkpoints/model_codeparrot_baseline_mamba.pt --dataset code --tokens 16384
+    uv run eval_long_context/eval_long.py --models checkpoints/model_codeparrot_hebbian.pt checkpoints/model_codeparrot_baseline_mamba.pt --dataset code_parrot --tokens 16384
 """
 
 import argparse, sys
@@ -106,7 +106,7 @@ def main():
     p.add_argument("--tokens",  type=int, default=4096)
     p.add_argument("--windows", type=int, default=4)
     p.add_argument("--segment", type=int, default=1024)
-    p.add_argument("--dataset", type=str, default="pg19", choices=["pg19", "code", "stack"])
+    p.add_argument("--dataset", type=str, default="pg19", choices=["pg19", "code_parrot", "the_stack"])
     p.add_argument("--out",     type=str, default=None)
     args = p.parse_args()
 
