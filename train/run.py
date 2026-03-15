@@ -24,6 +24,7 @@ MODELS = {
     "hebbian_100M": C.HEBBIAN_100M,
     "hebbian_mamba_18M": C.HEBBIAN_MAMBA_18M,
     "hebbian_mamba_100M": C.HEBBIAN_MAMBA_100M,
+    "gdn_18M": C.GDN_18M,
     "mamba_18M": C.MAMBA_18M,
     "mamba_100M": C.MAMBA_100M,
 }
@@ -61,10 +62,11 @@ def main():
         )
         print(f"  -> {path}")
 
-    # logging
     os.makedirs("checkpoints", exist_ok=True)
     os.makedirs("histories", exist_ok=True)
-    log_file = open(f"histories/{model_config.name}.jsonl", "a" if resume else "w")
+    log_path = f"histories/{model_config.name}.jsonl"
+    if not resume:
+        open(log_path, "w").close()
 
     def log(step, train_loss, step_ms, val_loss=None):
         tokens = step * tokens_per_step
@@ -74,8 +76,8 @@ def main():
         entry = {"step": step, "train_loss": train_loss, "tokens": tokens}
         if val_loss is not None:
             entry["val_loss"] = val_loss
-        log_file.write(json.dumps(entry) + "\n")
-        log_file.flush()
+        with open(log_path, "a") as f:
+            f.write(json.dumps(entry) + "\n")
 
     # print stats
     parameter_sum = sum(p.numel() for p in model.parameters())
@@ -122,22 +124,19 @@ def main():
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
 
-        # eval
         last_step = step == train_config.steps
-        if step % train_config.eval_interval == 0 or last_step:
-            val_loss = evaluate(model, val_loader, device)
-        else:
-            val_loss = None
+
+        # eval
+        eval_step = step % train_config.eval_interval == 0 or last_step
+        val_loss = evaluate(model, val_loader, device) if eval_step else None
 
         # log
         step_ms = (time.time() - t0) * 1000
         log(step, loss_accum, step_ms=step_ms, val_loss=val_loss)
 
-        # checkpoint
+        # save
         if step % train_config.ckpt_interval == 0 or last_step:
             save(step, checkpoint_path)
-
-    log_file.close()
 
     # sample
     raw_model = unwrap(model)

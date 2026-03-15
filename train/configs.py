@@ -8,6 +8,7 @@ class ModelType(str, Enum):
     HEBBIAN = "hebbian"
     HEBBIAN_MAMBA = "hebbian_mamba"
     MAMBA = "mamba"
+    GDN = "gdn"
 
 
 @dataclass
@@ -19,9 +20,11 @@ class ModelConfig:
     d_conv: int
     expand: int
     d_state: int
-    # Hebbian memory (optional, only for hebbian models)
+    # Hebbian memory (optional)
     memory_alpha: float | None = None
     chunk_size: int | None = None
+    # GDN (optional)
+    num_heads: int | None = None
 
 
 @dataclass
@@ -86,6 +89,20 @@ HEBBIAN_MAMBA_100M = ModelConfig(
     expand=2,
     d_state=16,
     memory_alpha=0.03,
+    chunk_size=64,
+)
+
+# -- GDN baseline --
+
+GDN_18M = ModelConfig(
+    name="gdn_18M",
+    model=ModelType.GDN,
+    d_model=512,
+    n_layers=6,
+    d_conv=4,
+    expand=2,
+    d_state=16,
+    num_heads=4,
     chunk_size=64,
 )
 

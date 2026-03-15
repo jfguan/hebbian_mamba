@@ -22,5 +22,9 @@ def build_model(model_config, vocab_size: int):
         from .mamba import Config, Mamba
         config = Config(**{k: v for k, v in fields.items() if hasattr(Config, k)})
         return Mamba(config)
+    elif model_type == ModelType.GDN:
+        from .gated_deltanet import Config, GatedDeltaNet
+        config = Config(**{k: v for k, v in fields.items() if hasattr(Config, k)})
+        return GatedDeltaNet(config)
     else:
         raise ValueError(f"Unknown model type: {model_type!r}")
