@@ -1,9 +1,19 @@
 from dataclasses import dataclass
+from enum import Enum
+
+from data.loader import DatasetName
+
+
+class ModelType(str, Enum):
+    HEBBIAN = "hebbian"
+    HEBBIAN_MAMBA = "hebbian_mamba"
+    MAMBA = "mamba"
 
 
 @dataclass
 class ModelConfig:
-    model: str
+    name: str
+    model: ModelType
     d_model: int
     n_layers: int
     d_conv: int
@@ -12,13 +22,11 @@ class ModelConfig:
     # Hebbian memory (optional, only for hebbian models)
     memory_alpha: float | None = None
     chunk_size: int | None = None
-    # Set at runtime from dataset
-    vocab_size: int = 0
 
 
 @dataclass
 class TrainConfig:
-    dataset: str
+    dataset: DatasetName
     steps: int
     batch_size: int
     seq_len: int
@@ -27,13 +35,13 @@ class TrainConfig:
     grad_accum: int
     eval_interval: int
     ckpt_interval: int
-    compile: bool = False
 
 
 # -- Hebbian --
 
 HEBBIAN_18M = ModelConfig(
-    model="hebbian_minimal",
+    name="hebbian_18M",
+    model=ModelType.HEBBIAN,
     d_model=512,
     n_layers=8,
     d_conv=4,
@@ -44,7 +52,8 @@ HEBBIAN_18M = ModelConfig(
 )
 
 HEBBIAN_100M = ModelConfig(
-    model="hebbian_minimal",
+    name="hebbian_100M",
+    model=ModelType.HEBBIAN,
     d_model=1024,
     n_layers=12,
     d_conv=4,
@@ -57,7 +66,8 @@ HEBBIAN_100M = ModelConfig(
 # -- Hebbian mamba --
 
 HEBBIAN_MAMBA_18M = ModelConfig(
-    model="hebbian_mamba",
+    name="hebbian_mamba_18M",
+    model=ModelType.HEBBIAN_MAMBA,
     d_model=512,
     n_layers=8,
     d_conv=4,
@@ -68,7 +78,8 @@ HEBBIAN_MAMBA_18M = ModelConfig(
 )
 
 HEBBIAN_MAMBA_100M = ModelConfig(
-    model="hebbian_mamba",
+    name="hebbian_mamba_100M",
+    model=ModelType.HEBBIAN_MAMBA,
     d_model=1024,
     n_layers=12,
     d_conv=4,
@@ -81,7 +92,8 @@ HEBBIAN_MAMBA_100M = ModelConfig(
 # -- Mamba baseline --
 
 MAMBA_100M = ModelConfig(
-    model="mamba",
+    name="mamba_100M",
+    model=ModelType.MAMBA,
     d_model=1024,
     n_layers=16,
     d_conv=4,
@@ -92,20 +104,20 @@ MAMBA_100M = ModelConfig(
 
 # -- Training hyperparameters --
 
-TRAIN_18M = TrainConfig(
-    dataset="pg19",
-    steps=1465,
-    batch_size=2,
+TRAIN_STACK_18M = TrainConfig(
+    dataset=DatasetName.THE_STACK,
+    steps=1221,
+    batch_size=4,
     seq_len=2048,
     lr=6e-4,
     warmup=20,
     grad_accum=1,
     eval_interval=100,
-    ckpt_interval=500,
+    ckpt_interval=1221,
 )
 
-TRAIN_100M = TrainConfig(
-    dataset="the_stack",
+TRAIN_STACK_100M = TrainConfig(
+    dataset=DatasetName.THE_STACK,
     steps=64000,
     batch_size=1,
     seq_len=2048,
@@ -113,5 +125,5 @@ TRAIN_100M = TrainConfig(
     warmup=500,
     grad_accum=1,
     eval_interval=200,
-    ckpt_interval=2000,
+    ckpt_interval=64000,
 )

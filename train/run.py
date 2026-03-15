@@ -3,7 +3,7 @@
 Usage:
     uv run train/run.py hebbian_minimal_18M 18M
     uv run train/run.py hebbian_mamba_100M 100M
-    uv run train/run.py hebbian_100M 100M --resume checkpoints/ckpt_hebbian_100M_step2000.pt
+    uv run train/run.py hebbian_100M 100M --resume
 """
 
 import argparse
@@ -11,7 +11,7 @@ import json
 import math
 import os
 import time
-from copy import deepcopy
+from dataclasses import replace
 
 import torch
 
@@ -28,46 +28,92 @@ MODELS = {
 }
 
 TRAINS = {
-    "train_18M": C.TRAIN_18M,
-    "train_100M": C.TRAIN_100M,
+    "train_stack_18M": C.TRAIN_STACK_18M,
+    "train_stack_100M": C.TRAIN_STACK_100M,
 }
 
 
 def main():
+    torch.manual_seed(42)
+
     # setup
-    args, model_config, train_config, tag = parse_args()
+    model_config, train_config, resume = parse_args()
     device = setup_device()
-    ds, train_loader, val_loader = setup_data(train_config)
-    model_config.vocab_size = ds.vocab_size
-    model, checkpoint_config, model_class, optimizer = setup_model(model_config, train_config, device)
+    dataset, train_loader, val_loader = setup_data(train_config)
+    model_config.vocab_size = dataset.vocab_size
+    model = build_model(model_config).to(device)
+    if device == "cuda":
+        model = torch.compile(model)
+    optimizer = configure_optimizers(
+        model, train_config.lr, use_fused=(device == "cuda")
+    )
+    checkpoint_path = f"checkpoints/{model_config.name}.pt"
+
+    def save(step, path):
+        torch.save(
+            {
+                "model": unwrap(model).state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "model_config": model_config,
+                "step": step,
+            },
+            path,
+        )
+        print(f"  -> {path}")
 
     # logging
     os.makedirs("checkpoints", exist_ok=True)
     os.makedirs("histories", exist_ok=True)
-    log_path = f"histories/{tag}.jsonl"
-    log_file = open(log_path, "a" if args.resume else "w")
+    log_file = open(f"histories/{model_config.name}.jsonl", "a" if resume else "w")
+
+    def log(step, train_loss, val_loss=None, **extra):
+        entry = {
+            "step": step,
+            "train_loss": train_loss,
+            "tokens": step * tokens_per_step,
+        }
+        if val_loss is not None:
+            entry["val_loss"] = val_loss
+        entry.update(extra)
+        print(
+            " | ".join(
+                f"{k} {v:.4f}" if isinstance(v, float) else f"{k} {v}"
+                for k, v in entry.items()
+            )
+        )
+        log_file.write(json.dumps(entry) + "\n")
+        log_file.flush()
 
     # print stats
-    n_params = sum(p.numel() for p in model.parameters())
-    print(f"{model_class} | {n_params / 1e6:.1f}M params | {device}")
-    start_step = (
-        resume_from(model, optimizer, args.resume, device) if args.resume else 0
-    )
+    parameter_sum = sum(p.numel() for p in model.parameters())
+    print(f"{model_config.name} | {parameter_sum / 1e6:.1f}M params | {device}")
+    start_step = resume_from(model, optimizer, checkpoint_path, device) if resume else 0
     print(
         f"Steps {start_step} -> {train_config.steps} | B={train_config.batch_size}x{train_config.grad_accum} T={train_config.seq_len} lr={train_config.lr}"
     )
 
     # training loop
     step = start_step
-    min_lr = train_config.lr * 0.1
-    tokens_per_step = train_config.batch_size * train_config.seq_len * train_config.grad_accum
+    max_lr = train_config.lr
+    min_lr = max_lr * 0.1
+    warmup_steps = train_config.warmup
+    decay_steps = max(train_config.steps - warmup_steps, 1)
+    tokens_per_step = (
+        train_config.batch_size * train_config.seq_len * train_config.grad_accum
+    )
+
     for step in range(start_step + 1, train_config.steps + 1):
         t0 = time.time()
 
-        # lr schedule
-        cur_lr = cosine_lr(step, train_config.warmup, train_config.steps, train_config.lr, min_lr)
+        # lr schedule: linear warmup then cosine decay
+        if step <= warmup_steps:
+            lr = max_lr * step / warmup_steps
+        else:
+            progress = (step - warmup_steps) / decay_steps
+            cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
+            lr = min_lr + (max_lr - min_lr) * cosine_decay
         for pg in optimizer.param_groups:
-            pg["lr"] = cur_lr
+            pg["lr"] = lr
 
         # forward + backward with grad accumulation
         optimizer.zero_grad(set_to_none=True)
@@ -75,7 +121,7 @@ def main():
         for _ in range(train_config.grad_accum):
             x, y = train_loader.batch()
             x, y = x.to(device), y.to(device)
-            with torch.autocast(device_type=device.split(":")[0], dtype=torch.bfloat16):
+            with torch.autocast(device_type=device, dtype=torch.bfloat16):
                 _, loss = model(x, y)
             loss = loss / train_config.grad_accum
             loss.backward()
@@ -84,206 +130,130 @@ def main():
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
 
+        # eval if necessary
+        validation_step = step % train_config.eval_interval == 0
+        val_loss = evaluate(model, val_loader, device) if validation_step else None
+
         # log
-        entry = {
-            "step": step,
-            "train_loss": loss_accum,
-            "tokens": step * tokens_per_step,
-            "lr": cur_lr,
-            "dt_ms": (time.time() - t0) * 1000,
-        }
-        if step % train_config.eval_interval == 0:
-            entry["val_loss"] = evaluate(model, val_loader, device)
-        log(log_file, entry)
+        step_ms = (time.time() - t0) * 1000
+        log(step, loss_accum, val_loss, lr=lr, step_ms=step_ms)
 
-        # Checkpoint
+        # checkpoint if necessary
         if step % train_config.ckpt_interval == 0:
-            save_checkpoint(
-                model,
-                optimizer,
-                checkpoint_config,
-                model_class,
-                step,
-                f"checkpoints/ckpt_{tag}_step{step}.pt",
-            )
+            save(step, f"checkpoints/{model_config.name}_step{step}.pt")
 
-    # final log
-    entry = {
-        "step": step,
-        "train_loss": loss_accum,
-        "tokens": step * tokens_per_step,
-        "val_loss": evaluate(model, val_loader, device),
-    }
-    log(log_file, entry)
     log_file.close()
-
-    # final checkpoint
-    save_checkpoint(
-        model, optimizer, checkpoint_config, model_class, step, f"checkpoints/model_{tag}.pt"
-    )
+    save(step, checkpoint_path)
 
     # sample
-    raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model
+    raw_model = unwrap(model)
     prompt = "def fizzbuzz(n):\n"
     print(
-        f"Sample:\n{sample(raw_model, ds.encode, ds.decode, device, prompt=prompt, n=300)}"
+        f"Sample:\n{sample(raw_model, dataset.encode, dataset.decode, device, prompt=prompt, n=300)}"
     )
 
 
 def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument("model", choices=MODELS.keys())
-    p.add_argument("train", choices=TRAINS.keys())
-    p.add_argument("--resume", type=str, default=None)
-    p.add_argument("--tag", type=str, default=None)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("model", choices=MODELS.keys())
+    parser.add_argument("train", choices=TRAINS.keys())
+    parser.add_argument("--resume", action="store_true")
 
-    args = p.parse_args()
-    model_config = deepcopy(MODELS[args.model])
-    train_config = deepcopy(TRAINS[args.train])
-    tag = args.tag or args.model
-    return args, model_config, train_config, tag
+    args = parser.parse_args()
+    model_config = replace(MODELS[args.model])
+    train_config = replace(TRAINS[args.train])
+    return model_config, train_config, args.resume
 
 
 def setup_device():
-    device = (
-        "mps"
-        if torch.backends.mps.is_available()
-        else "cuda"
-        if torch.cuda.is_available()
-        else "cpu"
-    )
-    torch.manual_seed(42)
-    if device.startswith("cuda"):
+    if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
-    return device
+        return "cuda"
+    elif torch.backends.mps.is_available():
+        return "mps"
+    else:
+        return "cpu"
 
 
 def setup_data(train_config):
-    ds = load_dataset(train_config.dataset)
-    train_loader = DataLoader(ds.train, train_config.batch_size, train_config.seq_len)
-    val_loader = DataLoader(ds.val, train_config.batch_size, train_config.seq_len)
-    return ds, train_loader, val_loader
+    dataset = load_dataset(train_config.dataset)
+
+    train_loader = DataLoader(
+        dataset.train, train_config.batch_size, train_config.seq_len
+    )
+    val_loader = DataLoader(dataset.val, train_config.batch_size, train_config.seq_len)
+
+    return dataset, train_loader, val_loader
 
 
-def setup_model(model_config, train_config, device):
-    model, checkpoint_config, model_class = build_model(model_config)
-    model = model.to(device)
-    if train_config.compile:
-        print("Compiling model...")
-        model = torch.compile(model)
-    optimizer = configure_optimizers(model, train_config.lr)
-    return model, checkpoint_config, model_class, optimizer
-
-
-def configure_optimizers(model, lr, weight_decay=0.1):
+def configure_optimizers(model, lr, use_fused):
     decay_params = [p for p in model.parameters() if p.dim() >= 2]
     nodecay_params = [p for p in model.parameters() if p.dim() < 2]
     optim_groups = [
-        {"params": decay_params, "weight_decay": weight_decay},
+        {"params": decay_params, "weight_decay": 0.1},
         {"params": nodecay_params, "weight_decay": 0.0},
     ]
     print(
         f"  decay params: {sum(p.numel() for p in decay_params):,} | no-decay params: {sum(p.numel() for p in nodecay_params):,}"
     )
-    use_fused = "cuda" in str(next(model.parameters()).device)
     return torch.optim.AdamW(optim_groups, lr=lr, betas=(0.9, 0.95), fused=use_fused)
 
 
 def resume_from(model, optimizer, path, device):
-    ckpt = torch.load(path, map_location=device, weights_only=False)
-    raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model
-    missing, unexpected = raw_model.load_state_dict(ckpt["model"], strict=False)
-    if missing:
-        print(f"  New params (randomly initialized): {missing}")
-    if unexpected:
-        print(f"  Dropped params from checkpoint: {unexpected}")
-    if not missing and not unexpected and "optimizer" in ckpt:
-        optimizer.load_state_dict(ckpt["optimizer"])
-    start_step = ckpt.get("step", 0)
-    print(f"Resumed from {path} at step {start_step}")
-    return start_step
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
+
+    # Load in model state
+    unwrap(model).load_state_dict(checkpoint["model"])
+
+    # Load in optimizer
+    optimizer.load_state_dict(checkpoint["optimizer"])
+
+    return checkpoint["step"]
 
 
-def cosine_lr(step, warmup, total, max_lr, min_lr):
-    if step <= warmup:
-        return max_lr * step / warmup
-    t = (step - warmup) / max(total - warmup, 1)
-    return min_lr + 0.5 * (max_lr - min_lr) * (1 + math.cos(math.pi * t))
-
-
-def log(log_file, entry):
-    print(
-        " | ".join(
-            f"{k} {v:.4f}" if isinstance(v, float) else f"{k} {v}"
-            for k, v in entry.items()
-        ),
-        flush=True,
-    )
-    log_file.write(json.dumps(entry) + "\n")
-    log_file.flush()
+def unwrap(model):
+    return model._orig_mod if hasattr(model, "_orig_mod") else model
 
 
 @torch.no_grad()
-def evaluate(model, loader, device, steps=10):
+def evaluate(model, loader, device, steps=20):
     model.eval()
-    total = 0.0
+
+    total_loss = 0.0
     for _ in range(steps):
         x, y = loader.batch()
-        with torch.autocast(device_type=device.split(":")[0], dtype=torch.bfloat16):
+
+        with torch.autocast(device_type=device, dtype=torch.bfloat16):
             _, loss = model(x.to(device), y.to(device))
-        total += loss.item()
+
+        total_loss += loss.item()
     model.train()
-    return total / steps
 
-
-def save_checkpoint(model, optimizer, checkpoint_config, model_class, step, path):
-    raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model
-    torch.save(
-        {
-            "model": raw_model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "config": checkpoint_config,
-            "model_class": model_class,
-            "step": step,
-        },
-        path,
-    )
-    print(f"  -> {path}", flush=True)
+    return total_loss / steps
 
 
 @torch.no_grad()
 def sample(model, encode, decode, device, prompt="", n=200, temperature=0.8):
     model.eval()
-    states, tokens = None, []
-
-    # process prompt
     prompt_ids = encode(prompt) if prompt else [0]
-    for tok_id in prompt_ids[:-1]:
-        token = torch.tensor([tok_id], dtype=torch.long, device=device)
-        _, states = model.step(token, states=states)
-        states = detach_states(states)
+    token = torch.tensor([prompt_ids[0]], dtype=torch.long, device=device)
+    states = None
+    generated = []
 
-    # generate
-    token = torch.tensor([prompt_ids[-1]], dtype=torch.long, device=device)
-    for _ in range(n):
+    for i in range(len(prompt_ids) - 1 + n):
         logits, states = model.step(token, states=states)
-        states = detach_states(states)
-        token = torch.multinomial(
-            torch.softmax(logits / temperature, dim=-1), 1
-        ).squeeze(-1)
-        tokens.append(token.item())
+        if i < len(prompt_ids) - 1:
+            # still feeding prompt
+            token = torch.tensor([prompt_ids[i + 1]], dtype=torch.long, device=device)
+        else:
+            # sampling
+            token = torch.multinomial(torch.softmax(logits / temperature, dim=-1), 1).squeeze(-1)
+            generated.append(token.item())
+
     model.train()
-    return prompt + decode(tokens)
+    return prompt + decode(generated)
 
-
-def detach_states(states):
-    return [
-        {k: v.detach() if isinstance(v, torch.Tensor) else v for k, v in s.items()}
-        if isinstance(s, dict)
-        else s
-        for s in states
-    ]
 
 
 if __name__ == "__main__":

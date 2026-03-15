@@ -136,7 +136,7 @@ def main():
     p.add_argument("--windows", type=int, default=4)
     p.add_argument("--model", type=str, default="checkpoints/model_memory.pt")
     p.add_argument("--segment", type=int, default=512)
-    p.add_argument("--dataset", type=str, default="pg19", choices=["pg19", "code_parrot", "the_stack"])
+    p.add_argument("--dataset", type=str, default="pg19", choices=["pg19", "the_stack"])
     args = p.parse_args()
 
     device = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"

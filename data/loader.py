@@ -3,7 +3,13 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from enum import Enum
 from functools import partial
+
+
+class DatasetName(str, Enum):
+    PG19 = "pg19"
+    THE_STACK = "the_stack"
 
 from datasets import load_dataset as hf_load, interleave_datasets
 import numpy as np
