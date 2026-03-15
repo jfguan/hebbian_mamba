@@ -20,6 +20,8 @@ import matplotlib.pyplot as plt
 import torch
 import yaml
 
+from data import load_dataset, DataLoader
+
 from models import build_model
 
 
@@ -34,67 +36,40 @@ class TrainConfig:
     grad_accum: int
     eval_interval: int
     ckpt_interval: int
+    compile: bool = False
 
 
 def main():
     args, model_cfg_dict, tc, tag = parse_args()
 
-    # Set Device
-    device = (
-        "mps"
-        if torch.backends.mps.is_available()
-        else "cuda"
-        if torch.cuda.is_available()
-        else "cpu"
+    device = setup_device()
+
+    train_loader, val_loader, ds = setup_data(tc)
+
+    model, model_cfg, model_class, optimizer = setup_model(
+        model_cfg_dict, ds.vocab_size, tc, device
     )
-    device_type = device.split(":")[0]
-    torch.manual_seed(42)
-    if device_type == "cuda":
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
 
-    # data
-    from data import load_dataset, DataLoader
+    start_step = (
+        resume_from(model, optimizer, args.resume, device) if args.resume else 0
+    )
 
-    ds = load_dataset(tc.dataset)
-    train_loader = DataLoader(ds.train, tc.batch_size, tc.seq_len)
-    val_loader = DataLoader(ds.val, tc.batch_size, tc.seq_len)
-
-    # model
-    model_cfg_dict["vocab_size"] = ds.vocab_size
-    model, model_cfg, model_class = build_model(model_cfg_dict)
-    model = model.to(device)
     n_params = sum(p.numel() for p in model.parameters())
-
-    if args.compile:
-        print("Compiling model...")
-        model = torch.compile(model)
-
-    optimizer = configure_optimizers(model, tc.lr)
-
-    # resume
-    start_step = 0
-    if args.resume:
-        start_step = resume_from(model, optimizer, args.resume, device)
-
-    # training loop
-    end_step = tc.steps
-    min_lr = tc.lr * 0.1
-    tokens_per_step = tc.batch_size * tc.seq_len * tc.grad_accum
-
     print(f"{model_class} | {n_params / 1e6:.1f}M params | {device}")
     print(
-        f"Steps {start_step} -> {end_step} | B={tc.batch_size}x{tc.grad_accum} T={tc.seq_len} lr={tc.lr}"
+        f"Steps {start_step} -> {tc.steps} | B={tc.batch_size}x{tc.grad_accum} T={tc.seq_len} lr={tc.lr}"
     )
 
     os.makedirs("checkpoints", exist_ok=True)
-    log_path = f"histories/history_{tag}.jsonl"
     os.makedirs("histories", exist_ok=True)
+    log_path = f"histories/history_{tag}.jsonl"
     log_file = open(log_path, "a" if args.resume else "w")
+    min_lr = tc.lr * 0.1
+    tokens_per_step = tc.batch_size * tc.seq_len * tc.grad_accum
 
     step = start_step
     try:
-        for step in range(start_step, end_step):
+        for step in range(start_step, tc.steps):
             t0 = time.time()
 
             # lr schedule
@@ -108,7 +83,9 @@ def main():
             for _ in range(tc.grad_accum):
                 x, y = train_loader.batch()
                 x, y = x.to(device), y.to(device)
-                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                with torch.autocast(
+                    device_type=device.split(":")[0], dtype=torch.bfloat16
+                ):
                     _, loss = model(x, y)
                 loss = loss / tc.grad_accum
                 loss.backward()
@@ -183,12 +160,44 @@ def main():
     print(f"Saved checkpoints/model_{tag}.pt + {log_path}")
 
 
+def setup_device():
+    device = (
+        "mps"
+        if torch.backends.mps.is_available()
+        else "cuda"
+        if torch.cuda.is_available()
+        else "cpu"
+    )
+    torch.manual_seed(42)
+    if device.startswith("cuda"):
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    return device
+
+
+def setup_data(tc):
+    ds = load_dataset(tc.dataset)
+    train_loader = DataLoader(ds.train, tc.batch_size, tc.seq_len)
+    val_loader = DataLoader(ds.val, tc.batch_size, tc.seq_len)
+    return train_loader, val_loader, ds
+
+
+def setup_model(model_cfg_dict, vocab_size, tc, device):
+    model_cfg_dict["vocab_size"] = vocab_size
+    model, model_cfg, model_class = build_model(model_cfg_dict)
+    model = model.to(device)
+    if tc.compile:
+        print("Compiling model...")
+        model = torch.compile(model)
+    optimizer = configure_optimizers(model, tc.lr)
+    return model, model_cfg, model_class, optimizer
+
+
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("model_config", type=str, help="Path to model YAML config")
     p.add_argument("train_config", type=str, help="Path to training YAML config")
     p.add_argument("--resume", type=str, default=None)
-    p.add_argument("--compile", action="store_true")
     p.add_argument("--tag", type=str, default=None)
     args = p.parse_args()
 
@@ -204,7 +213,6 @@ def parse_args():
     tc = TrainConfig(**{k: v for k, v in train_dict.items() if hasattr(TrainConfig, k)})
     tag = args.tag or os.path.splitext(os.path.basename(args.model_config))[0]
     return args, model_cfg, tc, tag
-
 
 
 def configure_optimizers(model, lr, weight_decay=0.1):

@@ -16,9 +16,11 @@ from tokenizers import Tokenizer, models, pre_tokenizers, trainers
 class DatasetConfig:
     cache_dir: str
     vocab_size: int
+
+    bpe_train_chars: int
+
     train_chars: int
     val_chars: int
-    bpe_train_chars: int
     stream_train: Callable[[int], str]  # (char_target) -> text
     stream_val: Callable[[int], str]
 
@@ -45,7 +47,7 @@ def _stream_stack(char_target: int, seed: int) -> str:
 
     combined = interleave_datasets(streams, seed=seed)
 
-    # Filter for only files above 32_000 chararacter length
+    # Filter for only files above 32_000 character length
     texts = (row["content"] for row in combined if len(row["content"]) >= 32_000)
     return _collect_chunks(texts, char_target)
 
@@ -120,71 +122,51 @@ def load_dataset(name: str = "pg19") -> Dataset:
     cfg = DATASETS[name]
     os.makedirs(cfg.cache_dir, exist_ok=True)
 
-    # Load cached dataset, download otherwise.
-    return _load_cached_dataset(cfg, name) or _download_dataset(cfg)
-
-
-def _load_cached_dataset(cfg: DatasetConfig, name: str) -> Dataset | None:
     tokenizer_path = os.path.join(cfg.cache_dir, "tokenizer.json")
     train_path = os.path.join(cfg.cache_dir, "train_tokens.npy")
     val_path = os.path.join(cfg.cache_dir, "val_tokens.npy")
 
-    # Check all cached files exist
-    if not (
+    # Try cache
+    if (
         os.path.exists(tokenizer_path)
         and os.path.exists(train_path)
         and os.path.exists(val_path)
     ):
-        return None
-
-    try:
         tokenizer = Tokenizer.from_file(tokenizer_path)
-    except Exception:
-        print("Incompatible tokenizer cache, retraining")
-        return None
+        if tokenizer.get_vocab_size() == cfg.vocab_size:
+            return Dataset(
+                np.load(train_path), np.load(val_path), cfg.vocab_size, tokenizer
+            )
 
-    if tokenizer.get_vocab_size() != cfg.vocab_size:
-        print(
-            f"vocab_size mismatch ({tokenizer.get_vocab_size()} vs {cfg.vocab_size}), retraining"
-        )
-        return None
-
-    train_data = np.load(train_path)
-    val_data = np.load(val_path)
-    return Dataset(train_data, val_data, cfg.vocab_size, tokenizer)
-
-
-def _download_dataset(cfg: DatasetConfig) -> Dataset:
-    # Stream text from HuggingFace
+    # Download data
     train_text = cfg.stream_train(cfg.train_chars)
     val_text = cfg.stream_val(cfg.val_chars)
 
-    # Train BPE tokenizer on subset of training text
-    tokenizer_path = os.path.join(cfg.cache_dir, "tokenizer.json")
-    bpe_sample = train_text[: cfg.bpe_train_chars]
-    print(
-        f"Training BPE tokenizer (vocab_size={cfg.vocab_size}) on {len(bpe_sample):,} chars..."
-    )
+    # Train and save tokenizer
+    tokenizer = _train_tokenizer(train_text[: cfg.bpe_train_chars], cfg.vocab_size)
+    tokenizer.save(tokenizer_path)
+
+    # Tokenize data
+    train_data = _tokenize(tokenizer, train_text, "train")
+    np.save(train_path, train_data)
+
+    val_data = _tokenize(tokenizer, val_text, "val")
+    np.save(val_path, val_data)
+
+    print(f"Cached to {cfg.cache_dir}")
+    return Dataset(train_data, val_data, cfg.vocab_size, tokenizer)
+
+
+def _train_tokenizer(text: str, vocab_size: int) -> Tokenizer:
+    print(f"Training BPE tokenizer (vocab_size={vocab_size}) on {len(text):,} chars...")
 
     tokenizer = Tokenizer(models.BPE())
     tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
-    trainer = trainers.BpeTrainer(vocab_size=cfg.vocab_size, special_tokens=[])
-    # Split into lines so BPE sees natural boundaries
-    tokenizer.train_from_iterator(bpe_sample.splitlines(), trainer=trainer)
-    tokenizer.save(tokenizer_path)
 
-    print(f"Saved tokenizer to {tokenizer_path}")
+    trainer = trainers.BpeTrainer(vocab_size=vocab_size, special_tokens=[])
+    tokenizer.train_from_iterator(text.splitlines(), trainer=trainer)
 
-    # Tokenize, save to disk
-    train_data = _tokenize(tokenizer, train_text, "train")
-    np.save(os.path.join(cfg.cache_dir, "train_tokens.npy"), train_data)
-
-    val_data = _tokenize(tokenizer, val_text, "val")
-    np.save(os.path.join(cfg.cache_dir, "val_tokens.npy"), val_data)
-
-    print(f"Cached token arrays to {cfg.cache_dir}")
-
-    return Dataset(train_data, val_data, cfg.vocab_size, tokenizer)
+    return tokenizer
 
 
 def _tokenize(tokenizer: Tokenizer, text: str, label: str) -> npt.NDArray[np.uint16]:
