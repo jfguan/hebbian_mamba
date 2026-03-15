@@ -240,6 +240,16 @@ class GatedDeltaNet(nn.Module):
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
         self.embedding.weight = self.lm_head.weight
 
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, std=0.02)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, std=0.02)
+
     def forward(self, input_ids, targets=None):
         x = self.embedding(input_ids)
         for layer in self.layers:
