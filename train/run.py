@@ -1,9 +1,9 @@
 """Unified training script.
 
 Usage:
-    uv run train/run.py hebbian_minimal_18M 18M
-    uv run train/run.py hebbian_mamba_100M 100M
-    uv run train/run.py hebbian_100M 100M --resume
+    uv run train/run.py hebbian_18M train_stack_18M
+    uv run train/run.py hebbian_mamba_100M train_stack_100M
+    uv run train/run.py hebbian_100M train_stack_100M --resume
 """
 
 import argparse
@@ -40,8 +40,7 @@ def main():
     model_config, train_config, resume = parse_args()
     device = setup_device()
     dataset, train_loader, val_loader = setup_data(train_config)
-    model_config.vocab_size = dataset.vocab_size
-    model = build_model(model_config).to(device)
+    model = build_model(model_config, dataset.vocab_size).to(device)
     if device == "cuda":
         model = torch.compile(model)
     optimizer = configure_optimizers(
@@ -93,7 +92,6 @@ def main():
     )
 
     # training loop
-    step = start_step
     max_lr = train_config.lr
     min_lr = max_lr * 0.1
     warmup_steps = train_config.warmup
@@ -253,8 +251,6 @@ def sample(model, encode, decode, device, prompt="", n=200, temperature=0.8):
 
     model.train()
     return prompt + decode(generated)
-
-
 
 if __name__ == "__main__":
     main()

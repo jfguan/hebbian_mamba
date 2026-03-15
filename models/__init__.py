@@ -3,11 +3,12 @@ from dataclasses import asdict
 from train.configs import ModelType
 
 
-def build_model(model_config):
+def build_model(model_config, vocab_size: int):
     fields = asdict(model_config)
     fields.pop("name")
     model_type = fields.pop("model")
     fields = {k: v for k, v in fields.items() if v is not None}
+    fields["vocab_size"] = vocab_size
 
     if model_type == ModelType.HEBBIAN:
         from .hebbian_minimal import Config, HebbianConv
