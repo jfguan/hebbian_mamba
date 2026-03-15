@@ -148,4 +148,4 @@ if __name__ == "__main__":
 
     train(model, device)
     results = sweep(model, device)
-    plot_capacity(results, "eval_synthetic_recall/capacity.png", d_model)
+    plot_capacity(results, "eval_results/capacity.png", d_model)

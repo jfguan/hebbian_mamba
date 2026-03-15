@@ -193,7 +193,7 @@ def main():
         e = min(s + seg, N)
         print(f"{s:>5}-{e:<5}  {mean_upd[si]:>10.4f}  {mean_frz[si]:>10.4f}  {mean_delta[si]:>+10.4f}  {stderr_delta[si]:>8.4f}")
 
-    plot_results(last_w_norms, last_loss_upd, last_loss_frz, "eval_memory/eval_memory.png")
+    plot_results(last_w_norms, last_loss_upd, last_loss_frz, "eval_results/memory.png")
 
 
 if __name__ == "__main__":

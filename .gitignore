@@ -1,13 +1,7 @@
 data/pg19/
-data/codeparrot/
 data/the_stack/
 data/__pycache__/
-eval_synthetic_recall/*
-!eval_synthetic_recall/run.py
-eval_long_context/*
-!eval_long_context/run.py
-eval_memory/*
-!eval_memory/run.py
+eval_results/
 .DS_Store
 __pycache__/
 .venv/

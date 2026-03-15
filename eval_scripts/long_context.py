@@ -109,7 +109,7 @@ def main():
     del ckpt
 
     tokens_k = round(args.tokens / 1000)
-    stem = f"eval_long_context/{tokens_k}k_{args.dataset}_{size_tag}"
+    stem = f"eval_results/{tokens_k}k_{args.dataset}_{size_tag}"
     png_path = f"{stem}.png"
 
     device = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
