@@ -198,9 +198,9 @@ class DataLoader:
     def batch(self) -> tuple[torch.Tensor, torch.Tensor]:
         ix = torch.randint(len(self.data) - self.T, (self.B,))
         x = torch.stack(
-            [torch.from_numpy(self.data[i : i + self.T].copy()) for i in ix]
+            [torch.from_numpy(self.data[i : i + self.T].copy().astype(int)) for i in ix]
         )
         y = torch.stack(
-            [torch.from_numpy(self.data[i + 1 : i + 1 + self.T].copy()) for i in ix]
+            [torch.from_numpy(self.data[i + 1 : i + 1 + self.T].copy().astype(int)) for i in ix]
         )
         return x, y

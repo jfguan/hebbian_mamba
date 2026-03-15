@@ -91,6 +91,16 @@ HEBBIAN_MAMBA_100M = ModelConfig(
 
 # -- Mamba baseline --
 
+MAMBA_18M = ModelConfig(
+    name="mamba_18M",
+    model=ModelType.MAMBA,
+    d_model=512,
+    n_layers=10,
+    d_conv=4,
+    expand=2,
+    d_state=16,
+)
+
 MAMBA_100M = ModelConfig(
     name="mamba_100M",
     model=ModelType.MAMBA,
@@ -110,7 +120,7 @@ TRAIN_STACK_18M = TrainConfig(
     batch_size=4,
     seq_len=2048,
     lr=6e-4,
-    warmup=20,
+    warmup=60,
     grad_accum=1,
     eval_interval=100,
     ckpt_interval=1221,
@@ -118,12 +128,12 @@ TRAIN_STACK_18M = TrainConfig(
 
 TRAIN_STACK_100M = TrainConfig(
     dataset=DatasetName.THE_STACK,
-    steps=64000,
-    batch_size=1,
+    steps=7813,
+    batch_size=2,
     seq_len=2048,
     lr=3e-4,
     warmup=500,
     grad_accum=1,
     eval_interval=200,
-    ckpt_interval=64000,
+    ckpt_interval=7813,
 )

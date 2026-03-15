@@ -24,6 +24,7 @@ MODELS = {
     "hebbian_100M": C.HEBBIAN_100M,
     "hebbian_mamba_18M": C.HEBBIAN_MAMBA_18M,
     "hebbian_mamba_100M": C.HEBBIAN_MAMBA_100M,
+    "mamba_18M": C.MAMBA_18M,
     "mamba_100M": C.MAMBA_100M,
 }
 
@@ -65,28 +66,21 @@ def main():
     os.makedirs("histories", exist_ok=True)
     log_file = open(f"histories/{model_config.name}.jsonl", "a" if resume else "w")
 
-    def log(step, train_loss, val_loss=None, **extra):
-        entry = {
-            "step": step,
-            "train_loss": train_loss,
-            "tokens": step * tokens_per_step,
-        }
+    def log(step, train_loss, step_ms, val_loss=None):
+        tokens = step * tokens_per_step
+        val_str = f" | val {val_loss:.4f}" if val_loss is not None else ""
+        print(f"step {step} | loss {train_loss:.4f}{val_str} | {tokens / 1e6:.1f}M tok | {step_ms:.0f}ms")
+
+        entry = {"step": step, "train_loss": train_loss, "tokens": tokens}
         if val_loss is not None:
             entry["val_loss"] = val_loss
-        entry.update(extra)
-        print(
-            " | ".join(
-                f"{k} {v:.4f}" if isinstance(v, float) else f"{k} {v}"
-                for k, v in entry.items()
-            )
-        )
         log_file.write(json.dumps(entry) + "\n")
         log_file.flush()
 
     # print stats
     parameter_sum = sum(p.numel() for p in model.parameters())
     print(f"{model_config.name} | {parameter_sum / 1e6:.1f}M params | {device}")
-    start_step = resume_from(model, optimizer, checkpoint_path, device) if resume else 0
+    start_step = resume_from(model, optimizer, checkpoint_path, device) if resume else 1
     print(
         f"Steps {start_step} -> {train_config.steps} | B={train_config.batch_size}x{train_config.grad_accum} T={train_config.seq_len} lr={train_config.lr}"
     )
@@ -100,7 +94,7 @@ def main():
         train_config.batch_size * train_config.seq_len * train_config.grad_accum
     )
 
-    for step in range(start_step + 1, train_config.steps + 1):
+    for step in range(start_step, train_config.steps + 1):
         t0 = time.time()
 
         # lr schedule: linear warmup then cosine decay
@@ -128,20 +122,22 @@ def main():
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
 
-        # eval if necessary
-        validation_step = step % train_config.eval_interval == 0
-        val_loss = evaluate(model, val_loader, device) if validation_step else None
+        # eval
+        last_step = step == train_config.steps
+        if step % train_config.eval_interval == 0 or last_step:
+            val_loss = evaluate(model, val_loader, device)
+        else:
+            val_loss = None
 
         # log
         step_ms = (time.time() - t0) * 1000
-        log(step, loss_accum, val_loss, lr=lr, step_ms=step_ms)
+        log(step, loss_accum, step_ms=step_ms, val_loss=val_loss)
 
-        # checkpoint if necessary
-        if step % train_config.ckpt_interval == 0:
-            save(step, f"checkpoints/{model_config.name}_step{step}.pt")
+        # checkpoint
+        if step % train_config.ckpt_interval == 0 or last_step:
+            save(step, checkpoint_path)
 
     log_file.close()
-    save(step, checkpoint_path)
 
     # sample
     raw_model = unwrap(model)
@@ -192,9 +188,6 @@ def configure_optimizers(model, lr, use_fused):
         {"params": decay_params, "weight_decay": 0.1},
         {"params": nodecay_params, "weight_decay": 0.0},
     ]
-    print(
-        f"  decay params: {sum(p.numel() for p in decay_params):,} | no-decay params: {sum(p.numel() for p in nodecay_params):,}"
-    )
     return torch.optim.AdamW(optim_groups, lr=lr, betas=(0.9, 0.95), fused=use_fused)
 
 
@@ -246,11 +239,14 @@ def sample(model, encode, decode, device, prompt="", n=200, temperature=0.8):
             token = torch.tensor([prompt_ids[i + 1]], dtype=torch.long, device=device)
         else:
             # sampling
-            token = torch.multinomial(torch.softmax(logits / temperature, dim=-1), 1).squeeze(-1)
+            token = torch.multinomial(
+                torch.softmax(logits / temperature, dim=-1), 1
+            ).squeeze(-1)
             generated.append(token.item())
 
     model.train()
     return prompt + decode(generated)
+
 
 if __name__ == "__main__":
     main()
