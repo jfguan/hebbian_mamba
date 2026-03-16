@@ -52,43 +52,49 @@ def main():
     # eval
     results = sweep(model, device)
     plot_capacity(
-        results, f"eval_results/capacity_{label}.png", d_model=128, label=label
+        results,
+        f"eval_results/synthetic_recall_capacity_{label}.png",
+        d_model=128,
+        label=label,
     )
 
 
 def make_batch(batch_size, num_pairs, device):
     """Generate a KV recall task.
 
-    Layout: [k1 v1 k2 v2 ... | k3 v? k1 v? ...]
-    First half stores KV pairs, second half queries in shuffled order.
-    The model must recall the value for each queried key.
+    Store phase: model sees [k1, v1, k2, v2, ...] — memorize these pairs.
+    Query phase: model sees [k?, _, k?, _, ...] — predict the value for each key.
+    Keys are reshuffled in query phase so the model can't just memorize order.
 
-    returns: (input_ids, targets, mask) where mask marks recall positions.
+    returns: (input_ids, targets, mask) where mask marks value prediction positions.
     """
-    B, P = batch_size, num_pairs
+    B = batch_size
+    P = num_pairs
 
-    # random unique keys and random values
+    # generate random KV pairs
     keys = torch.stack([torch.randperm(N_KEYS, device=device)[:P] for _ in range(B)])
     values = torch.randint(N_KEYS, VOCAB, (B, P), device=device)
 
-    # interleave keys and values: [k1, v1, k2, v2, ...]
-    store = torch.stack([keys, values], dim=-1).view(B, 2 * P)
+    # store phase: interleave keys and values [k1, v1, k2, v2, ...]
+    store_keys = keys  # (B, P)
+    store_values = values  # (B, P)
+    store_seq = torch.stack([store_keys, store_values], dim=-1).view(B, 2 * P)
 
-    # same pairs in shuffled order for the query phase
-    shuffled_idx = torch.stack([torch.randperm(P, device=device) for _ in range(B)])
-    query = torch.stack(
-        [
-            keys.gather(1, shuffled_idx),
-            values.gather(1, shuffled_idx),
-        ],
-        dim=-1,
-    ).view(B, 2 * P)
+    # query phase: same pairs but shuffled order
+    shuffle = torch.stack([torch.randperm(P, device=device) for _ in range(B)])
+    query_keys = keys.gather(1, shuffle)
+    query_values = values.gather(1, shuffle)
+    query_seq = torch.stack([query_keys, query_values], dim=-1).view(B, 2 * P)
 
-    # full sequence: store phase then query phase
-    input_ids = torch.cat([store, query], dim=1)
+    # full sequence: [store | query]
+    input_ids = torch.cat([store_seq, query_seq], dim=1)
 
-    # mask: only score value predictions in the query phase (every other position)
+    # targets: next-token prediction
     targets = input_ids[:, 1:]
+
+    # mask: only score value predictions in query phase
+    # query starts at position 2*P, values are at odd positions within query (2*P, 2*P+2, ...)
+    # in targets (shifted by 1), these are at indices 2*P, 2*P+2, ...
     mask = torch.zeros_like(targets, dtype=torch.float)
     mask[:, 2 * P :: 2] = 1.0
     return input_ids, targets, mask
@@ -153,28 +159,33 @@ def sweep(model, device):
 
 
 def plot_capacity(results, path, d_model, label="hebbian"):
-    pairs = list(results.keys())
-    accuracy_pcts = [results[p] * 100 for p in pairs]
+    num_pairs = list(results.keys())
+    accuracy_pct = [results[p] * 100 for p in num_pairs]
+    guess_chance = 100 / N_VALS
 
+    # plot
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(pairs, accuracy_pcts, "o-", linewidth=2, markersize=8)
+    ax.plot(num_pairs, accuracy_pct, "o-", linewidth=2, markersize=8)
     ax.axhline(
-        y=100 / N_VALS,
+        y=guess_chance,
         color="r",
         ls="--",
         alpha=0.5,
-        label=f"chance ({100 / N_VALS:.1f}%)",
+        label=f"chance ({guess_chance:.1f}%)",
     )
+
+    # axes
     ax.set(
         xlabel="Number of KV pairs",
         ylabel="Recall accuracy (%)",
         title=f"{label} memory capacity (d_model={d_model})",
         ylim=(-5, 105),
     )
-    ax.set_xticks(pairs)
+    ax.set_xticks(num_pairs)
     ax.legend()
     ax.grid(True, alpha=0.3)
 
+    # save
     fig.tight_layout()
     fig.savefig(path, dpi=150)
     plt.close(fig)

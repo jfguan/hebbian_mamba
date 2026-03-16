@@ -39,7 +39,6 @@ class HybridHebbianLayer(nn.Module):
                 head_dim=cfg.head_dim or cfg.d_model,
                 chunk_size=cfg.chunk_size,
                 memory_alpha=cfg.memory_alpha,
-                neg_eigenvalues=cfg.neg_eigenvalues,
             )
         elif mode == "hebbian":
             self.memory = HebbianBlock(

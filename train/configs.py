@@ -6,7 +6,7 @@ from data.loader import DatasetName
 
 class ModelType(str, Enum):
     HEBBIAN = "hebbian"
-DELTA_HEBBIAN = "delta_hebbian"
+    DELTA_HEBBIAN = "delta_hebbian"
     MAMBA = "mamba"
     GDN = "gdn"
 
@@ -31,7 +31,6 @@ class ModelConfig:
     # Delta Hebbian
     delta_layers: str | None = None      # comma-separated layer indices, e.g. "6,7"
     no_memory_layers: str | None = None  # layers with conv+MLP only, no memory
-    neg_eigenvalues: bool = False         # beta [0,2] on delta layers
 
     # GDN
     num_heads: int | None = None
