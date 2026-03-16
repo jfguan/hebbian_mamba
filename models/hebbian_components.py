@@ -71,6 +71,7 @@ class HebbianBlock(nn.Module):
 
         self.proj_write = nn.Linear(d_model, d_model, bias=False)
         self.proj_read = nn.Linear(d_model, d_model, bias=False)
+        nn.init.zeros_(self.proj_read.weight)
 
         # per-head decay: σ(4.6) ≈ 0.99
         self.decay = nn.Parameter(torch.full((self.n_heads,), 4.6))
@@ -90,22 +91,24 @@ class HebbianBlock(nn.Module):
         C = 64
         out32 = out.float()
 
-        # projections
-        k = F.normalize(out32.view(B, T, H, d), dim=-1).transpose(1, 2).float()  # (B, H, T, d)
+        # projections — write key is previous position, read key is current
+        rk = F.normalize(out32.view(B, T, H, d), dim=-1).transpose(1, 2).float()  # (B, H, T, d)
+        wk = F.pad(rk[:, :, :-1], (0, 0, 1, 0))  # shift right by 1
         v = self.proj_write(out32).view(B, T, H, d).transpose(1, 2).float()
         beta = torch.sigmoid(self.proj_beta(out32)).transpose(1, 2).unsqueeze(-1)  # (B, H, T, 1)
 
-        # scale v and k by beta
+        # scale v and wk by beta
         v = v * beta
-        k_beta = k * beta
+        wk_beta = wk * beta
 
         # pad to chunk boundary
         pad_len = (C - (T % C)) % C
         if pad_len > 0:
-            k = F.pad(k, (0, 0, 0, pad_len))
+            rk = F.pad(rk, (0, 0, 0, pad_len))
+            wk = F.pad(wk, (0, 0, 0, pad_len))
             v = F.pad(v, (0, 0, 0, pad_len))
-            k_beta = F.pad(k_beta, (0, 0, 0, pad_len))
-        T_padded = k.shape[2]
+            wk_beta = F.pad(wk_beta, (0, 0, 0, pad_len))
+        T_padded = rk.shape[2]
         num_chunks = T_padded // C
 
         # precompute decay masks — constant per head, reused across all chunks
@@ -119,20 +122,21 @@ class HebbianBlock(nn.Module):
         causal_mask = torch.triu(torch.ones(C, C, device=out.device, dtype=torch.bool), diagonal=1)
 
         # reshape into chunks: (B, H, num_chunks, C, d)
-        k = k.view(B, H, num_chunks, C, d)
+        rk = rk.view(B, H, num_chunks, C, d)
+        wk = wk.view(B, H, num_chunks, C, d)
         v = v.view(B, H, num_chunks, C, d)
-        k_beta = k_beta.view(B, H, num_chunks, C, d)
+        wk_beta = wk_beta.view(B, H, num_chunks, C, d)
 
         # WY pre-processing: solve (I + A) for corrected values
         diag_mask = torch.triu(torch.ones(C, C, device=out.device, dtype=torch.bool))
-        A = -(k_beta @ k.transpose(-1, -2) * L_mask).masked_fill(diag_mask, 0)
+        A = -(wk_beta @ wk.transpose(-1, -2) * L_mask).masked_fill(diag_mask, 0)
         A = A.clone()
         for i in range(1, C):
             A[..., i, :i] = A[..., i, :i].clone() + (A[..., i, :i].clone().unsqueeze(-1) * A[..., :i, :i].clone()).sum(-2)
         A = A + torch.eye(C, device=out.device)
 
         v = A @ v
-        k_cumdecay = A @ (k_beta * decay_exp)
+        wk_cumdecay = A @ (wk_beta * decay_exp)
 
         # chunk-by-chunk state propagation
         S = out32.new_zeros(B, H, d, d)
@@ -142,11 +146,11 @@ class HebbianBlock(nn.Module):
         dw = ((cum_decay[:, -1:] - cum_decay).exp()).unsqueeze(-1)  # (H, C, 1)
 
         for i in range(num_chunks):
-            k_i, v_i = k[:, :, i], v[:, :, i]
-            attn = (k_i @ k_i.transpose(-1, -2) * L).masked_fill(causal_mask, 0)
-            v_new = v_i - k_cumdecay[:, :, i] @ S
-            o[:, :, i] = (k_i * de) @ S + attn @ v_new
-            S = chunk_total_decay * S + (k_i * dw).transpose(-1, -2) @ v_new
+            rk_i, wk_i, v_i = rk[:, :, i], wk[:, :, i], v[:, :, i]
+            attn = (rk_i @ wk_i.transpose(-1, -2) * L).masked_fill(causal_mask, 0)
+            v_new = v_i - wk_cumdecay[:, :, i] @ S
+            o[:, :, i] = (rk_i * de) @ S + attn @ v_new
+            S = chunk_total_decay * S + (wk_i * dw).transpose(-1, -2) @ v_new
 
         # flatten chunks, unpad
         o = o.view(B, H, T_padded, d).transpose(1, 2).reshape(B, T_padded, D)[:, :T]
@@ -156,25 +160,31 @@ class HebbianBlock(nn.Module):
         """Recurrent form for inference.
 
         out: (B, D) hidden state (used as key).
-        state: dict with 'W', or None.
+        state: dict with 'W' and 'k_prev', or None.
 
         returns: (B, D) augmented, new state dict.
         """
         B, D = out.shape
         H, d = self.n_heads, self.head_dim
 
-        k = F.normalize(out.view(B * H, d), dim=-1)
+        rk = F.normalize(out.view(B * H, d), dim=-1)
         v = self.proj_write(out).view(B * H, d)
         beta = torch.sigmoid(self.proj_beta(out)).view(B * H, 1, 1)
         gamma = torch.sigmoid(self.decay).repeat(B).view(B * H, 1, 1)
-        W = state["W"].view(B * H, d, d) if state is not None else out.new_zeros(B * H, d, d)
 
-        # read with key
-        read = (W @ k.unsqueeze(-1)).squeeze(-1)
+        if state is not None:
+            W = state["W"].view(B * H, d, d)
+            wk = state["k_prev"].view(B * H, d)
+        else:
+            W = out.new_zeros(B * H, d, d)
+            wk = out.new_zeros(B * H, d)
 
-        # delta rule: W = γW + β(v - Wk)k^T
-        error = (v - read).unsqueeze(-1)
-        W.mul_(gamma).add_(beta * error @ k.unsqueeze(-2))
+        # read with current key
+        read = (W @ rk.unsqueeze(-1)).squeeze(-1)
+
+        # delta rule write with previous key: W = γW + β(v - W@wk) ⊗ wk
+        error = (v - (W @ wk.unsqueeze(-1)).squeeze(-1)).unsqueeze(-1)
+        W = gamma * W + beta * error @ wk.unsqueeze(-2)
 
         read = read.view(B, D)
-        return out + self.proj_read(read), {"W": W.view(B, H, d, d)}
+        return out + self.proj_read(read), {"W": W.view(B, H, d, d), "k_prev": rk.view(B, H, d)}
