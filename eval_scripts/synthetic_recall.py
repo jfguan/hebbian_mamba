@@ -1,6 +1,8 @@
-import sys
+"""Hebbian memory capacity benchmark.
 
-sys.path.insert(0, "..")
+Train on KV pairs, then measure recall accuracy at increasing pair counts.
+Plots the capacity curve: where does the memory matrix start to fail?
+"""
 
 import torch
 import torch.nn as nn
@@ -10,53 +12,26 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-import argparse
+from models.hebbian_components import CausalConv, GatedMLP, HebbianBlock
 
-from models.hebbian_components import (
-    CausalConv,
-    GatedMLP,
-    HebbianBlock,
-    DeltaHebbianBlock,
-)
-
-# Test config
+# -- config --
 N_KEYS = 256
 N_VALS = 16
 VOCAB = N_KEYS + N_VALS
-TRAIN_PAIRS = 64
+TRAIN_PAIRS = 32
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--delta",
-        action="store_true",
-        help="use DeltaHebbianBlock instead of HebbianBlock",
-    )
-    args = parser.parse_args()
-
-    # setup
     torch.manual_seed(42)
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    label = "delta_hebbian" if args.delta else "hebbian"
 
-    # create model
-    model = Model(d_model=128, n_layers=4, use_delta=args.delta).to(device)
+    model = Model(d_model=128, n_layers=4).to(device)
     param_sum = sum(p.numel() for p in model.parameters()) / 1e6
-    print(
-        f"{label}  device={device}  params={param_sum:.2f}M  train_pairs={TRAIN_PAIRS}"
-    )
+    print(f"device={device}  params={param_sum:.2f}M  train_pairs={TRAIN_PAIRS}")
 
     train(model, device)
-
-    # eval
     results = sweep(model, device)
-    plot_capacity(
-        results,
-        f"eval_results/synthetic_recall_capacity_{label}.png",
-        d_model=128,
-        label=label,
-    )
+    plot_capacity(results, "eval_results/synthetic_recall.png", d_model=128)
 
 
 def make_batch(batch_size, num_pairs, device):
@@ -68,39 +43,33 @@ def make_batch(batch_size, num_pairs, device):
 
     returns: (input_ids, targets, mask) where mask marks value prediction positions.
     """
-    B = batch_size
-    P = num_pairs
+    B, P = batch_size, num_pairs
 
     # generate random KV pairs
     keys = torch.stack([torch.randperm(N_KEYS, device=device)[:P] for _ in range(B)])
     values = torch.randint(N_KEYS, VOCAB, (B, P), device=device)
 
     # store phase: interleave keys and values [k1, v1, k2, v2, ...]
-    store_keys = keys  # (B, P)
-    store_values = values  # (B, P)
-    store_seq = torch.stack([store_keys, store_values], dim=-1).view(B, 2 * P)
+    store_seq = torch.stack([keys, values], dim=-1).view(B, 2 * P)
 
     # query phase: same pairs but shuffled order
     shuffle = torch.stack([torch.randperm(P, device=device) for _ in range(B)])
-    query_keys = keys.gather(1, shuffle)
-    query_values = values.gather(1, shuffle)
-    query_seq = torch.stack([query_keys, query_values], dim=-1).view(B, 2 * P)
+    query_seq = torch.stack([
+        keys.gather(1, shuffle),
+        values.gather(1, shuffle),
+    ], dim=-1).view(B, 2 * P)
 
     # full sequence: [store | query]
     input_ids = torch.cat([store_seq, query_seq], dim=1)
 
-    # targets: next-token prediction
-    targets = input_ids[:, 1:]
-
     # mask: only score value predictions in query phase
-    # query starts at position 2*P, values are at odd positions within query (2*P, 2*P+2, ...)
-    # in targets (shifted by 1), these are at indices 2*P, 2*P+2, ...
+    targets = input_ids[:, 1:]
     mask = torch.zeros_like(targets, dtype=torch.float)
     mask[:, 2 * P :: 2] = 1.0
     return input_ids, targets, mask
 
 
-def train(model, device, steps=1000, stop_acc=0.995):
+def train(model, device, steps=1500):
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     for step in range(1, steps + 1):
         # generate a batch of KV recall tasks
@@ -124,14 +93,7 @@ def train(model, device, steps=1000, stop_acc=0.995):
                 predictions = logits.argmax(-1)
                 correct = (predictions == targets) * mask
                 accuracy = correct.sum() / mask.sum()
-            print(
-                f"step {step:3d}  loss={loss.item():.4f}  recall={accuracy.item():.1%}"
-            )
-
-            # break early if converged
-            if accuracy.item() >= stop_acc:
-                print(f"  converged at step {step}")
-                return
+            print(f"step {step:3d}  loss={loss.item():.4f}  recall={accuracy.item():.1%}")
 
 
 def sweep(model, device):
@@ -142,14 +104,11 @@ def sweep(model, device):
     results = {}
     with torch.no_grad():
         for num_pairs in [4, 8, 16, 32, 64, 96, 128, 160, 192, 256]:
-            # average over 20 trials per pair count
             accuracies = []
             for _ in range(20):
                 x, targets, mask = make_batch(64, num_pairs, device)
-
                 predictions = model(x)[:, :-1].argmax(-1)
                 correct = (predictions == targets) * mask
-
                 accuracies.append(correct.sum() / mask.sum())
 
             results[num_pairs] = torch.stack(accuracies).mean().item()
@@ -158,50 +117,37 @@ def sweep(model, device):
     return results
 
 
-def plot_capacity(results, path, d_model, label="hebbian"):
+def plot_capacity(results, path, d_model):
     num_pairs = list(results.keys())
     accuracy_pct = [results[p] * 100 for p in num_pairs]
     guess_chance = 100 / N_VALS
 
-    # plot
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.plot(num_pairs, accuracy_pct, "o-", linewidth=2, markersize=8)
-    ax.axhline(
-        y=guess_chance,
-        color="r",
-        ls="--",
-        alpha=0.5,
-        label=f"chance ({guess_chance:.1f}%)",
-    )
-
-    # axes
+    ax.axhline(y=guess_chance, color="r", ls="--", alpha=0.5, label=f"chance ({guess_chance:.1f}%)")
     ax.set(
         xlabel="Number of KV pairs",
         ylabel="Recall accuracy (%)",
-        title=f"{label} memory capacity (d_model={d_model})",
+        title=f"Hebbian memory capacity (d_model={d_model})",
         ylim=(-5, 105),
     )
     ax.set_xticks(num_pairs)
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # save
     fig.tight_layout()
     fig.savefig(path, dpi=150)
     plt.close(fig)
     print(f"saved {path}")
 
 
+# -- model --
+
 class Model(nn.Module):
-    def __init__(self, d_model, n_layers, d_conv=4, use_delta=False):
+    def __init__(self, d_model, n_layers, d_conv=4):
         super().__init__()
         self.embedding = nn.Embedding(VOCAB, d_model)
-        self.layers = nn.ModuleList(
-            [
-                Layer(d_model, d_conv=d_conv, use_delta=use_delta)
-                for _ in range(n_layers)
-            ]
-        )
+        self.layers = nn.ModuleList([Layer(d_model, d_conv=d_conv) for _ in range(n_layers)])
         self.norm = nn.RMSNorm(d_model)
         self.head = nn.Linear(d_model, VOCAB, bias=False)
         self.embedding.weight = self.head.weight
@@ -214,16 +160,13 @@ class Model(nn.Module):
 
 
 class Layer(nn.Module):
-    def __init__(self, d_model, d_conv=4, expand=2, use_delta=False):
+    def __init__(self, d_model, d_conv=4, expand=2):
         super().__init__()
         d_inner = expand * d_model
         self.norm = nn.RMSNorm(d_model)
         self.mlp = GatedMLP(d_model, expand=expand)
         self.conv = CausalConv(d_inner, d_conv=d_conv)
-        if use_delta:
-            self.memory = DeltaHebbianBlock(d_model, head_dim=d_model)
-        else:
-            self.memory = HebbianBlock(d_model, head_dim=d_model)
+        self.memory = HebbianBlock(d_model, head_dim=d_model)
 
     def forward(self, x):
         normed = self.norm(x)
