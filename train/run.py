@@ -2,8 +2,8 @@
 
 Usage:
     uv run train/run.py hebbian_18M train_stack_18M
-    uv run train/run.py hebbian_mamba_100M train_stack_100M
-    uv run train/run.py hebbian_100M train_stack_100M --resume
+    uv run train/run.py gdn_18M train_stack_18M
+    uv run train/run.py mamba_18M train_stack_18M
 """
 
 import argparse
@@ -22,8 +22,6 @@ import train.configs as C
 MODELS = {
     "hebbian_18M": C.HEBBIAN_18M,
     "hebbian_100M": C.HEBBIAN_100M,
-    "hebbian_mamba_18M": C.HEBBIAN_MAMBA_18M,
-    "hebbian_mamba_100M": C.HEBBIAN_MAMBA_100M,
     "gdn_18M": C.GDN_18M,
     "mamba_18M": C.MAMBA_18M,
     "mamba_100M": C.MAMBA_100M,

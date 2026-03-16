@@ -14,10 +14,6 @@ def build_model(model_config, vocab_size: int):
         from .hebbian import Config, HebbianConv
         config = Config(**{k: v for k, v in fields.items() if hasattr(Config, k)})
         return HebbianConv(config)
-    elif model_type == ModelType.HEBBIAN_MAMBA:
-        from .hebbian_mamba import Config, HebbianMamba
-        config = Config(**{k: v for k, v in fields.items() if hasattr(Config, k)})
-        return HebbianMamba(config)
     elif model_type == ModelType.MAMBA:
         from .mamba import Config, Mamba
         config = Config(**{k: v for k, v in fields.items() if hasattr(Config, k)})

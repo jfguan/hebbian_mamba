@@ -6,7 +6,6 @@ from data.loader import DatasetName
 
 class ModelType(str, Enum):
     HEBBIAN = "hebbian"
-    HEBBIAN_MAMBA = "hebbian_mamba"
     MAMBA = "mamba"
     GDN = "gdn"
 
@@ -22,7 +21,7 @@ class ModelConfig:
     d_state: int
     # Hebbian memory (optional)
     memory_alpha: float | None = None
-    chunk_size: int | None = None
+    head_dim: int | None = None
     # GDN (optional)
     num_heads: int | None = None
 
@@ -51,7 +50,7 @@ HEBBIAN_18M = ModelConfig(
     expand=2,
     d_state=16,
     memory_alpha=0.03,
-    chunk_size=64,
+    head_dim=128,
 )
 
 HEBBIAN_100M = ModelConfig(
@@ -63,33 +62,7 @@ HEBBIAN_100M = ModelConfig(
     expand=2,
     d_state=16,
     memory_alpha=0.03,
-    chunk_size=64,
-)
-
-# -- Hebbian mamba --
-
-HEBBIAN_MAMBA_18M = ModelConfig(
-    name="hebbian_mamba_18M",
-    model=ModelType.HEBBIAN_MAMBA,
-    d_model=512,
-    n_layers=8,
-    d_conv=4,
-    expand=2,
-    d_state=16,
-    memory_alpha=0.03,
-    chunk_size=64,
-)
-
-HEBBIAN_MAMBA_100M = ModelConfig(
-    name="hebbian_mamba_100M",
-    model=ModelType.HEBBIAN_MAMBA,
-    d_model=1024,
-    n_layers=12,
-    d_conv=4,
-    expand=2,
-    d_state=16,
-    memory_alpha=0.03,
-    chunk_size=64,
+    head_dim=128,
 )
 
 # -- GDN baseline --
@@ -103,7 +76,7 @@ GDN_18M = ModelConfig(
     expand=2,
     d_state=16,
     num_heads=4,
-    chunk_size=64,
+    head_dim=128,
 )
 
 # -- Mamba baseline --
