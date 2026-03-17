@@ -1,10 +1,81 @@
-# Hebbian Memory Models
+# Hebbian Linear Models
 
+Hebbian linear models are a minimal yet extremely effective linear architecture for general modeling.
+
+It's similar to other linear architectures like  Mamba and Gated Delta Net, but is much simpler - each layer is just a convolution, MLP, and memory block. The memory block which is an associative matrix - a fixed cost soft KV cache.
+
+There are a few very small but critical changes:
+1. The convolution + MLP is the main processor - the memory is additive with a residual skip.
+2. A token shift during memory write allows removing the QK projections.
+3. The memory matrix is not split into heads to effectively increase storage space.
+
+Hebbian linear versus baseline mamba shows a modest improvement on pg19 prose (-0.1 loss), but a massive improvement (-0.9 loss) on the_stack code due to code's natural associative structure in variable assignments.
+
+# Attention Basic Review (feel free to skip)
+The attention mechanism cost in the transformer is quadratic - longer sequences are much more costly, due to the QKV structure.
+
+In a simplified single layer text example with word tokens, we need to predict the blank:
+The dog barked. The man saw the dog ____?
+
+To predict what comes after 'dog', the model creates a Query vector (q). Every previous word has a Key vector (k) associated. The dot product of each Q and K tells us how related the two words are.
+
+For example, 'dog' is likely more related to the previous 'dog', 'barked' words, and less so to 'the' and 'saw'.
+
+The Value vector (v) contains the contexualized meaning of the word - bark is an dog's action, not the bark of a tree for example.
+
+q*k tells us the relation strength, which we use to scale the influence of a previous word's v for our current prediction. The attention mechanism gives us the appropriate context for prediction.
+
+The main problem is with really long text, you need to compute Q*K for every word, and hence need to cache the KV values for every previous word to avoid recomputing them.
+
+This is really expensive, so people have tried many things like combining different attention types like sliding window (keep only last X tokens), strided(keep every Y tokens), with global to keep the cost down.
+
+A different research direction is linear models, which instead have a fixed cost regardless of sequence length. 
+
+# Linear Models Basic Review (feel free to skip)
+Many different linear architectures exist (Mamba 1/2/3, Gated Delta Net, Kimi Linear, etc.), the simplified problem is that the infinite series of Key and Value vectors of attention must be compressed into a fixed size matrix, let's just call M for memory.
+
+The original linear attention publishes the core insight:
+For each k,v vectors, take the outer product v⊗k or (v · k^T).
+Multiplying v⊗k by k again, we get v · (k^T @ k) = v · ‖k‖². You get v back.
+Essentially, storing kv together allows retrieving v with k. 
+
+After adding v⊗k to M, multiplying M by k retrieves v. M is your KV cache.
+However, M is fixed size, so continually adding v⊗k start to overlap. Instead of a clean v retrieval, you get a weighted combination of all v's in M, which could be useful.
+
+Every new token, we multiple M by decay (γ) so old keys fade and "make room" for new keys.
+
+# Linear Models Issues
+Fundementally, compared to full attention which retains all kv vectors crisply, linear attention compression can only approximate. The cost of faster speed is worse recall, which many hybrids like Jamba, Olmo Hybrid, Kimi Linear mitigate by using linear and full attention layers in a 3:1 ratio for example, to try and reduce the cost.
+
+
+# Hebbian Linear Token Shift
+Originally, the hebbian memory matrix augmented Mamba to mitigate recall issues, stacking layers of MambaBlock -> HebbianBlock.
+
+Critically, this matrix uses a new token shift Opus 4.5 seredipitously discovered, which reduces parameter cost by 12.5% to 25% per layer.
+
+Linear architectures all create the q/k/v vectors via projections for the memory matrix. However, during prediction, we're storing v⊗k, which is "symmetric". We're storing the key for the new predicted token with the "thinking state" together, which isn't very useful.
+
+Going back to our example:
+The dog barked. The man saw the dog ____?
+
+in our memory matrix, we have the key value pairs of "dog": "thinking about dog"
+and "barked": "thinking about barking"
+
+We need to predict "bark", so the query vector learns to transform into something close to the value of "barked", so we retrieve our previous thinking state and predict "bark" correctly.
+
+The Hebbian token shift instead uses the previous word directly as the key to break the symmetry, so the key value pairs look like "the": "thinking about dog",  "dog": "thinking about barking". Now, when we get to the second dog in the sentence, we use the previous token "dog" as the key, and retrieve "thinking about barking" and predict bark. 
+
+This skips the Q and K projections that produce q/k, which is around 12.5% of the layer parameters
+
+
+
+I believe only Mamba 3 does something similar trapazoidal keys, and RWKV-7's lerp which does a weighted average of the previous key and the current but keeps the QK projections.
+
+## Results
 A full-rank $d \times d$ associative memory matrix augmenting each layer of a language model. The memory accumulates outer-product associations over the context at $O(Td^2)$ cost — linear in sequence length — and injects retrieved content into the residual stream via a skip connection.
 
 The architecture pairs a gated causal convolution (local token mixing) with the Hebbian memory (long-range associative binding) at every layer. No attention, no SSM — just conv + memory.
 
-## Results
 
 Hebbian vs Mamba baseline (parameter-matched, same data, same training):
 

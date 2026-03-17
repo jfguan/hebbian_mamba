@@ -11,6 +11,7 @@ class DatasetName(str, Enum):
     PG19 = "pg19"
     THE_STACK = "the_stack"
 
+
 from datasets import load_dataset as hf_load, interleave_datasets
 import numpy as np
 import numpy.typing as npt
@@ -27,7 +28,9 @@ class DatasetConfig:
 
     train_chars: int
     val_chars: int
-    stream_train: Callable[[int], str]  # (char_target) -> text
+
+    # callable args: char_target and split
+    stream_train: Callable[[int], str]
     stream_val: Callable[[int], str]
 
 
@@ -201,6 +204,9 @@ class DataLoader:
             [torch.from_numpy(self.data[i : i + self.T].copy().astype(int)) for i in ix]
         )
         y = torch.stack(
-            [torch.from_numpy(self.data[i + 1 : i + 1 + self.T].copy().astype(int)) for i in ix]
+            [
+                torch.from_numpy(self.data[i + 1 : i + 1 + self.T].copy().astype(int))
+                for i in ix
+            ]
         )
         return x, y
