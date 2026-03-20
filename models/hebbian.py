@@ -44,7 +44,8 @@ class HebbianLayer(nn.Module):
         normed = self.norm(x)
         val = self.conv(self.mlp.project_up(normed))
         out = self.mlp(normed, val)
-        out = self.memory(out)
+        if getattr(self, "_memory_enabled", True):
+            out = self.memory(out)
         return x + out
 
     def step(self, x, state=None):

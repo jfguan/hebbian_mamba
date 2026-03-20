@@ -126,59 +126,22 @@ In addition, we create a new layer type delta hebbian, which is just hebbian wit
 To test that the architecture generalizes, we use Karpathy's nano-gpt setup, training a 124M model on fineweb-edu data for 10B tokens. With no tuning we see validation loss is ~.10 worse than the GPT-2.
 
 
-## Experiments (March 2026)
+## My Persoanl Linear Crusade
+Disrupting quadratic multi-head attention with linear approximations seems doomed, but the bitter lesson gives hope:
+1. Learned approximations approach the real patterns
+2. Linear complexity best utilizes compute, critical as rollouts extend and image/video require much longer context.
 
-Explored the delta rule, alpha tuning, component ablations, and layer patterns. All at 18M params, 1221 steps on The Stack (code).
+Additionally, linear mechanisms look worse than they are:
 
-### Results
+1. benchmarks effectively disallow rereading, making a very unnatural test setting that biases hard for recall. 
+Full attention can read and remember the question, context, and answer choices clearly. Great!
+Linear attention can't keep everything in memory, but humans don't read questions once then shoot from the hip - we re-read whatever we need.
+A fair comparison requires agentic models that actionably re-request information, like how humans can ask “what was the question again?”. Unfortunately, agentic scale requires a lot of investment.
+2. short context training biases toward full attention, but real architectures use sliding window to manage cost
+3. Recall and needle in a haystack are misleading metrics. We don't want perfect recall,  we want fluid lookup capabilities augmented by note taking.
 
-| Model | Val Loss | Step time | Architecture |
-|---|---|---|---|
-| Hebbian + delta deep, alpha=0.2 | **1.711** | 2992ms | 6 conv+hebb + 2 conv+delta (layers 6,7) |
-| Hebbian, alpha=0.2 | 1.726 | ~2800ms | 8 conv+hebb |
-| Hebbian, alpha=0.1 | 1.744 | ~2800ms | 8 conv+hebb |
-| Hebbian, alpha=0.03 (original) | 1.779 | ~2800ms | 8 conv+hebb |
-| Conv + 2 hebb + 1 delta | 1.779 | 2015ms | 7 conv + 2 hebb + 1 delta |
-| Conv only (10 layers) | 1.874 | 1887ms | 10 conv+MLP |
-| Conv + 2 delta (no hebb) | 1.980 | 1756ms | 8 conv + 2 delta |
-| All-delta (simplified) | ~2.05 | — | 8 conv+delta |
-| Mamba | 2.45 | 38017ms | 10 Mamba layers |
-| Memory only (no conv) | 2.573 | 2489ms | 8 MLP+hebb |
-| All-delta (full GDN-style) | 2.77 | — | 8 conv+delta (input-dep decay, beta) |
+It’s hard to invest in linear architectures when all benchmarks suggests they are strictly worse.
 
-### What works
+First, attention sinks, strided, sliding, etc. are methods of compression. For strided attention, why every 4th token? For sliding window, what if the important token slides right outside the window?  We hope global layers plug the gaps, but the bitter lesson emphasizes learning compression over designing it.
 
-- **Alpha=0.2 is the biggest win.** Going from 0.03 to 0.2 gives +0.053 nats — more than any architectural change. At 0.03, memory contributes too little signal for gradients to increase it. Learned alpha stays near its init (confirmed on 100M FineWeb run at 19K steps: alpha settled at 0.01–0.07 per layer).
-- **Sparse delta at deep layers.** 2 delta layers at positions 6,7 on top of plain Hebbian gives +0.015 nats. Delta works best on abstract representations where key normalization loses less information.
-- **Memory at every layer.** Removing memory from first 4 layers costs ~0.15 nats. Early layers build associations that later layers refine — conv+MLP can't substitute.
-- **Conv+MLP is the backbone.** 10 conv+MLP layers get 1.874 — ~70% of the way to full Hebbian. The memory adds long-range associations on top.
-
-### What doesn't work
-
-- **Delta at every layer.** WY forward-substitution + forced key normalization hurts optimization. The normalized key space compresses token information that raw keys preserve.
-- **Delta without Hebbian priming.** Delta layers at the end need earlier Hebbian layers to populate the memory. Conv-only → delta gives worse results than conv-only → more conv.
-- **Alpha ≥ 0.3.** Destabilizes training — memory overwhelms the residual stream before useful representations form.
-- **Negative eigenvalues (beta [0,2]).** NaN with normalized keys and WY correction.
-- **Memory in residual stream (no skip).** Activations explode layer-over-layer without the skip connection to anchor magnitudes. GDN solves this with output gate + RMSNorm; plain Hebbian uses the skip connection instead.
-
-### Architecture insights
-
-**Plain Hebbian's simplicity is its strength.** No WY correction, no key normalization, raw hidden states as keys (magnitude carries information), just batched matmuls in a short chunk loop. No custom kernel needed at any scale — standard cuBLAS handles everything. The chunkwise parallel form (32 iterations for T=2048, C=64) is 30–40x faster than sequential recurrence on MPS.
-
-**The skip connection replaces GDN's output gate.** GDN stabilizes memory reads with `norm(o) * silu(gate)` — a learned valve. Plain Hebbian stabilizes with a skip connection — simpler, fewer params, same effect.
-
-**Delta rule's niche: precise recall at deep layers.** The error correction (`v - W·k`) helps when the model needs exact associations (variable names, function signatures). But it requires normalized keys for numerical stability, which limits its use to layers where representations are abstract enough that normalization doesn't lose important information.
-
-**Conv handles local, memory handles global.** Conv (d_conv=4) captures syntax and local patterns. Memory (D×D matrix) captures cross-file associations. Neither can substitute for the other — removing conv costs more than removing memory.
-
-## Checkpoints
-
-| File | Params | Dataset |
-|---|---|---|
-| `checkpoints/model_mem1.pt` | 18M | PG-19 prose |
-| `checkpoints/model_code_memory.pt` | 18M | codeparrot |
-| `checkpoints/model_code_deep.pt` | 17.2M | codeparrot (baseline) |
-| `checkpoints/model_code100M_memory.pt` | 105.7M | codeparrot |
-| `checkpoints/model_code100M_deep.pt` | 107.2M | codeparrot (baseline) |
-| `checkpoints/model_stack100M_memory.pt` | 97.5M | The Stack |
-| `checkpoints/model_stack100M_deep.pt` | 101.1M | The Stack (baseline) |
+Second, hybrid models patch the recall issue with full attention, but the runtime is still a smaller quadratic. Again, at scale the better linear complexity should win. We have too much information to process - we’re struggling at 1M tokens on language already and we’ve barely started video/image with heavy downscaling.
