@@ -12,6 +12,7 @@ import torch
 
 from data import load_dataset
 from data.loader import DatasetName
+from models import build_model
 from train.run import sample
 
 

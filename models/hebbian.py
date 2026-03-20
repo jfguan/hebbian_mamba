@@ -37,7 +37,6 @@ class HebbianLayer(nn.Module):
         self.memory = HebbianBlock(
             d_model=cfg.d_model,
             chunk_size=cfg.chunk_size,
-            memory_alpha=cfg.memory_alpha,
             head_dim=cfg.head_dim,
         )
 

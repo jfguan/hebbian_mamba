@@ -58,8 +58,16 @@ class GatedDeltaNetBlock(nn.Module):
 
         self.beta_proj = nn.Linear(d_model, num_heads, bias=False)
         self.alpha_proj = nn.Linear(d_model, num_heads, bias=False)
-        self.dt_bias = nn.Parameter(torch.ones(num_heads))
+
+        # Mamba-style dt initialization: inverse-softplus of log-uniform in [0.001, 0.1]
+        dt = torch.empty(num_heads).uniform_(0, 1) * (torch.tensor(0.1).log() - torch.tensor(0.001).log()) + torch.tensor(0.001).log()
+        dt = dt.exp()
+        inv_dt = dt + torch.log(-torch.expm1(-dt))
+        self.dt_bias = nn.Parameter(inv_dt)
+        self.dt_bias._no_weight_decay = True
+
         self.A_log = nn.Parameter(torch.empty(num_heads).uniform_(0, 16).log())
+        self.A_log._no_weight_decay = True
 
         self.norm = RMSNorm(self.head_dim)
 

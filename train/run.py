@@ -23,11 +23,12 @@ import train.configs as C
 MODELS = {
     "hebbian_18M": C.HEBBIAN_18M,
     "hebbian_100M": C.HEBBIAN_100M,
-
-"delta_hebbian_18M": C.DELTA_HEBBIAN_18M,
+    "delta_hebbian_18M": C.DELTA_HEBBIAN_18M,
     "delta_hebbian_100M": C.DELTA_HEBBIAN_100M,
+    "hybrid_100M": C.HYBRID_100M,
     "conv_only_18M": C.CONV_ONLY_18M,
     "gdn_18M": C.GDN_18M,
+    "gdn_100M": C.GDN_100M,
     "mamba_18M": C.MAMBA_18M,
     "mamba_100M": C.MAMBA_100M,
 }
@@ -101,7 +102,11 @@ def main():
         train_config.batch_size * train_config.seq_len * train_config.grad_accum
     )
 
-    for step in range(start_step, train_config.steps + 1):
+    end_step = train_config.steps
+    if train_config.max_steps_per_run is not None:
+        end_step = min(end_step, start_step + train_config.max_steps_per_run)
+
+    for step in range(start_step, end_step + 1):
         t0 = time.time()
 
         # lr schedule: linear warmup then cosine decay

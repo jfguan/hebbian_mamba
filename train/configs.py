@@ -48,6 +48,7 @@ class TrainConfig:
     grad_accum: int
     eval_interval: int
     ckpt_interval: int
+    max_steps_per_run: int | None = None
 
 
 # -- Model configs (name is overridden at runtime to <model>_<dataset>_<size>) --
@@ -99,10 +100,24 @@ DELTA_HEBBIAN_100M = ModelConfig(
     d_conv=4,
     expand=2,
     d_state=16,
+    chunk_size=32,
+    memory_alpha=0.1,
+    head_dim=128,
+    delta_layers="0,1,2,3,4,5,6,7,8,9,10,11",
+)
+
+HYBRID_100M = ModelConfig(
+    name="hybrid",
+    model=ModelType.DELTA_HEBBIAN,
+    d_model=1024,
+    n_layers=12,
+    d_conv=4,
+    expand=2,
+    d_state=16,
     chunk_size=64,
     memory_alpha=0.1,
-    head_dim=256,
-    delta_layers="10,11",
+    head_dim=128,
+    delta_layers="0,1,3,4,5,6,7,8,11",
 )
 
 GDN_18M = ModelConfig(
@@ -115,6 +130,18 @@ GDN_18M = ModelConfig(
     d_state=16,
     chunk_size=64,
     num_heads=4,
+)
+
+GDN_100M = ModelConfig(
+    name="gdn",
+    model=ModelType.GDN,
+    d_model=1024,
+    n_layers=9,
+    d_conv=4,
+    expand=2,
+    d_state=16,
+    chunk_size=64,
+    num_heads=8,
 )
 
 CONV_ONLY_18M = ModelConfig(
@@ -163,6 +190,7 @@ TRAIN_PG19_18M = TrainConfig(
     grad_accum=1,
     eval_interval=100,
     ckpt_interval=1221,
+    max_steps_per_run=1221,
 )
 
 TRAIN_STACK_18M = TrainConfig(
@@ -175,16 +203,18 @@ TRAIN_STACK_18M = TrainConfig(
     grad_accum=1,
     eval_interval=100,
     ckpt_interval=1221,
+    max_steps_per_run=1221,
 )
 
 TRAIN_STACK_100M = TrainConfig(
     dataset=DatasetName.THE_STACK,
-    steps=15626,
+    steps=244000,
     batch_size=1,
     seq_len=2048,
     lr=3e-4,
-    warmup=1000,
+    warmup=5000,
     grad_accum=1,
-    eval_interval=200,
-    ckpt_interval=2000,
+    eval_interval=1000,
+    ckpt_interval=10000,
+    max_steps_per_run=48828,
 )

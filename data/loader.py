@@ -92,9 +92,9 @@ DATASETS: dict[str, DatasetConfig] = {
     "the_stack": DatasetConfig(
         cache_dir=os.path.join(DATA_DIR, "the_stack"),
         vocab_size=1024,
-        train_chars=64_000_000,
-        val_chars=4_000_000,
-        bpe_train_chars=5_000_000,
+        train_chars=2_000_000_000,
+        val_chars=20_000_000,
+        bpe_train_chars=10_000_000,
         stream_train=partial(_stream_stack, seed=42),
         stream_val=partial(_stream_stack, seed=1337),
     ),
@@ -144,16 +144,22 @@ def load_dataset(name: str = "pg19") -> Dataset:
         tokenizer = Tokenizer.from_file(tokenizer_path)
         if tokenizer.get_vocab_size() == cfg.vocab_size:
             return Dataset(
-                np.load(train_path), np.load(val_path), cfg.vocab_size, tokenizer
+                np.load(train_path, mmap_mode="r"), np.load(val_path, mmap_mode="r"), cfg.vocab_size, tokenizer
             )
+
+    # Load or train tokenizer
+    if os.path.exists(tokenizer_path):
+        print(f"Loading existing tokenizer from {tokenizer_path}")
+        tokenizer = Tokenizer.from_file(tokenizer_path)
+    else:
+        bpe_text = cfg.stream_train(cfg.bpe_train_chars)
+        tokenizer = _train_tokenizer(bpe_text, cfg.vocab_size)
+        tokenizer.save(tokenizer_path)
+        del bpe_text
 
     # Download data
     train_text = cfg.stream_train(cfg.train_chars)
     val_text = cfg.stream_val(cfg.val_chars)
-
-    # Train and save tokenizer
-    tokenizer = _train_tokenizer(train_text[: cfg.bpe_train_chars], cfg.vocab_size)
-    tokenizer.save(tokenizer_path)
 
     # Tokenize data
     train_data = _tokenize(tokenizer, train_text, "train")
@@ -178,13 +184,20 @@ def _train_tokenizer(text: str, vocab_size: int) -> Tokenizer:
     return tokenizer
 
 
-def _tokenize(tokenizer: Tokenizer, text: str, label: str) -> npt.NDArray[np.uint16]:
-    print(f"Tokenizing {label} set...")
-    data = np.array(tokenizer.encode(text).ids, dtype=np.uint16)
+def _tokenize(tokenizer: Tokenizer, text: str, label: str, chunk_size: int = 10_000_000) -> npt.NDArray[np.uint16]:
+    from tqdm import tqdm
 
-    n_chars, n_tokens = len(text), len(data)
-    ratio = n_chars / n_tokens
-    print(f"  {n_chars:,} chars -> {n_tokens:,} tokens ({ratio:.1f}x compression)")
+    n_chars = len(text)
+    all_ids = []
+
+    chunks = range(0, n_chars, chunk_size)
+    for start in tqdm(chunks, desc=f"Tokenizing {label}", unit="chunk"):
+        end = min(start + chunk_size, n_chars)
+        all_ids.extend(tokenizer.encode(text[start:end]).ids)
+
+    data = np.array(all_ids, dtype=np.uint16)
+    ratio = n_chars / len(data)
+    print(f"  {n_chars:,} chars -> {len(data):,} tokens ({ratio:.1f}x compression)")
     return data
 
 

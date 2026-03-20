@@ -5,6 +5,7 @@
 - Use minimal section comments: `# -- <section> --`
 - Declare variables close to where they're used, not at the top of a function.
 - Follow the coding principles of Ilya Sutskever, Jeff Dean, and John Carmack: simple code, no unnecessary abstraction, optimize for readability and correctness, prefer straightforward solutions over clever ones.
+- Write extremely easy to consume code. Optimize for how easy the code is to read. Make the code skimmable. Avoid cleverness.
 - Docstring format for args/returns:
   ```
   """Short description.

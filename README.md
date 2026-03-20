@@ -2,9 +2,12 @@
 
 Hebbian linear models are a minimal yet extremely effective linear architecture for general modeling.
 
-It's similar to other linear architectures like  Mamba and Gated Delta Net, but is much simpler - each layer is:
+Hebbian linear versus baseline Mamba shows a modest improvement on pg19 prose (-0.1 loss), but a massive improvement (-0.9 loss) on the_stack code due to code's natural associative structure in variable assignments.
 
-4 token convolution -> MLP -> memory block -> next layer
+Since it's mostly full matmuls, it's also extremely fast with existing Flash Linear Attention kernels.
+
+It's similar Mamba and Gated Delta Net, but is extremely minimal - each layer is:
+4 token convolution -> MLP -> memory block
 
 The memory block which is an associative matrix - a fixed cost soft KV cache similar to Gated Delta Net but uses the full matrix instead of block diagonal with divided heads.
 
@@ -12,8 +15,6 @@ There are a few very small but critical changes:
 1. The convolution + MLP is the main processor - the memory is additive with a residual skip.
 2. A token shift during memory write allows removing the QK projections.
 3. The memory matrix is not split into heads to effectively increase storage space.
-
-Hebbian linear versus baseline mamba shows a modest improvement on pg19 prose (-0.1 loss), but a massive improvement (-0.9 loss) on the_stack code due to code's natural associative structure in variable assignments.
 
 # Attention Basic Review (feel free to skip)
 The attention mechanism cost in the transformer is quadratic - longer sequences are much more costly, due to the QKV structure.

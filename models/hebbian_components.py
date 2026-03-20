@@ -56,14 +56,14 @@ class GatedMLP(nn.Module):
 
 
 class HebbianBlock(nn.Module):
-    """Block-diagonal associative memory: W_t = γW_{t-1} + v_t⊗k_{t-1}, read_t = W_t·q_t.
+    """Associative memory with data-dependent decay, write gate, and output gate.
 
-    When head_dim is None (default), uses a single D×D matrix.
-    When head_dim is set, uses n_heads independent head_dim×head_dim matrices.
-    Chunkwise parallel for training, recurrent for inference.
+    W_t = e^g · W_{t-1} + β·v_t⊗k_{t-1}
+    Token shift: write key is previous token, read key is current.
+    No key normalization — raw hidden states as keys.
     """
 
-    def __init__(self, d_model: int, chunk_size: int = 64, memory_alpha: float = 0.03, head_dim: int | None = None):
+    def __init__(self, d_model: int, chunk_size: int = 64, head_dim: int | None = None):
         super().__init__()
         self.d_model = d_model
         self.chunk_size = chunk_size
@@ -76,70 +76,98 @@ class HebbianBlock(nn.Module):
             self.head_dim = d_model
             self.n_heads = 1
 
+        H = self.n_heads
         self.proj_write = nn.Linear(d_model, d_model, bias=False)
-        self.proj_read = nn.Linear(d_model, d_model, bias=False)
-        self.decay = nn.Parameter(torch.full((self.n_heads,), 4.6))  # σ(4.6) ≈ 0.99
-        self.log_alpha = nn.Parameter(torch.full((self.n_heads,), memory_alpha).log())
+        self.gate_proj = nn.Linear(d_model, H, bias=False)
+        self.out_proj = nn.Linear(d_model, d_model, bias=False)
+
+        # write gate
+        self.beta_proj = nn.Linear(d_model, H, bias=False)
+
+        # data-dependent decay (Mamba-style init)
+        self.alpha_proj = nn.Linear(d_model, H, bias=False)
+        dt = torch.empty(H).uniform_(0, 1) * (torch.tensor(0.1).log() - torch.tensor(0.001).log()) + torch.tensor(0.001).log()
+        dt = dt.exp()
+        self.dt_bias = nn.Parameter(dt + torch.log(-torch.expm1(-dt)))
+        self.dt_bias._no_weight_decay = True
+        self.A_log = nn.Parameter(torch.empty(H).uniform_(0, 16).log())
+        self.A_log._no_weight_decay = True
 
     def forward(self, out):
-        """Chunkwise parallel form.
+        """Chunkwise parallel form with data-dependent decay.
 
         out: (B, T, D) hidden states.
         returns: (B, T, D) augmented with memory reads.
         """
         B, T, D = out.shape
         H, d, C = self.n_heads, self.head_dim, self.chunk_size
-        out32 = out.float()
+        x = out.float()
 
-        gamma = torch.sigmoid(self.decay)                                  # (H,)
-        log_gamma = gamma.log()                                                # (H,)
+        # projections — token shift for write key
+        v = self.proj_write(x).view(B, T, H, d)
+        gate = self.gate_proj(x).sigmoid().view(B, T, H, 1)
+        beta = self.beta_proj(x).sigmoid().view(B, T, H, 1)
+        decay = -self.A_log.exp().view(1, 1, H) * F.softplus(self.alpha_proj(x) + self.dt_bias)
 
-        v = self.proj_write(out32).view(B, T, H, d).transpose(1, 2)     # (B, H, T, d)
-        rk = out32.view(B, T, H, d).transpose(1, 2)                      # (B, H, T, d)
-        wk = F.pad(rk[:, :, :-1], (0, 0, 1, 0))                         # (B, H, T, d)
+        rk = x.view(B, T, H, d)
+        wk = F.pad(rk[:, :-1], (0, 0, 0, 0, 1, 0))  # shift along T dim
 
-        # -- flatten B*H for batched matmuls --
-        BH = B * H
-        gamma_bh = gamma.repeat(B)                                         # (BH,)
-        log_gamma_bh = log_gamma.repeat(B)                                 # (BH,)
-        v = v.reshape(BH, T, d)
-        rk = rk.reshape(BH, T, d)
-        wk = wk.reshape(BH, T, d)
+        # transpose to (B, H, T, d)
+        rk, wk, v = [t.transpose(1, 2).float() for t in (rk, wk, v)]
 
-        W = out32.new_zeros(BH, d, d)
-        reads_list = []
+        # scale v by beta
+        v = v * beta.transpose(1, 2)
 
-        for start in range(0, T, C):
-            end = min(start + C, T)
-            Ci = end - start
-            p = torch.arange(Ci, device=out.device)
+        # pad to chunk boundary
+        pad = (C - (T % C)) % C
+        if pad > 0:
+            rk = F.pad(rk, (0, 0, 0, pad))
+            wk = F.pad(wk, (0, 0, 0, pad))
+            v = F.pad(v, (0, 0, 0, pad))
+            decay = F.pad(decay, (0, 0, 0, pad))
 
-            rk_c, wk_c, v_c = rk[:, start:end], wk[:, start:end], v[:, start:end]
+        T_pad = rk.shape[2]
+        N = T_pad // C
 
-            # Inter-chunk: γ^l * (W_prev @ rk_c[l])
-            inter = torch.matmul(W, rk_c.transpose(1, 2)).transpose(1, 2)
-            inter = inter * (gamma_bh[:, None, None] ** p[None, :, None])
+        # reshape into chunks: (B, H, N, C, d)
+        rk = rk.view(B, H, N, C, d)
+        wk = wk.view(B, H, N, C, d)
+        v = v.view(B, H, N, C, d)
+        decay = decay.transpose(1, 2).view(B, H, N, C)
 
-            # Intra-chunk: (M ⊙ S) @ v
-            S = torch.bmm(rk_c, wk_c.transpose(1, 2))
-            diffs = (p[:, None] - 1 - p[None, :]).clamp(min=0)
-            causal = p[:, None] > p[None, :]
-            M = torch.exp(diffs[None] * log_gamma_bh[:, None, None]) * causal[None]
-            intra = torch.bmm(S * M, v_c)
+        # cumulative decay within each chunk
+        decay = decay.cumsum(-1)
+        decay_exp = decay.unsqueeze(-1).exp()
 
-            reads_list.append(inter + intra)
+        # intra-chunk causal decay mask
+        L_mask = (decay.unsqueeze(-1) - decay.unsqueeze(-2)).exp().tril()
 
-            # Advance W: γ^Ci · W + Σ_l γ^(Ci-1-l) · v[l] ⊗ wk[l]
-            gw = gamma_bh[:, None, None] ** (Ci - 1 - p)[None, :, None]
-            W = gamma_bh[:, None, None] ** Ci * W + torch.bmm((v_c * gw).transpose(1, 2), wk_c)
+        # causal mask: strictly lower triangular (read before write)
+        causal = torch.triu(torch.ones(C, C, device=x.device, dtype=torch.bool), diagonal=0)
 
-        reads = torch.cat(reads_list, dim=1).view(B, H, T, d)
-        alpha = self.log_alpha.exp().view(1, H, 1, 1)
-        reads = (alpha * reads).transpose(1, 2).reshape(B, T, D)
-        return out + self.proj_read(reads).to(out.dtype)
+        # intra-chunk attention
+        intra = (rk @ wk.transpose(-1, -2) * L_mask).masked_fill(causal, 0)
+
+        # chunk-by-chunk state propagation
+        S = x.new_zeros(B, H, d, d)
+        o = torch.zeros_like(v)
+
+        for i in range(N):
+            rk_i, wk_i, v_i = rk[:, :, i], wk[:, :, i], v[:, :, i]
+            o_inter = (rk_i * decay_exp[:, :, i]) @ S
+            o[:, :, i] = o_inter + intra[:, :, i] @ v_i
+
+            # advance state
+            decay_weights = (decay[:, :, i, -1, None] - decay[:, :, i]).exp().unsqueeze(-1)
+            S = S * decay[:, :, i, -1, None, None].exp() + (wk_i * decay_weights).transpose(-1, -2) @ v_i
+
+        # output gate + projection
+        o = o.view(B, H, T_pad, d).transpose(1, 2)[:, :T]  # (B, T, H, d)
+        o = o * gate  # per-head gating
+        return out + self.out_proj(o.reshape(B, T, D)).to(out.dtype)
 
     def step(self, out, state=None):
-        """Recurrent form.
+        """Recurrent form with data-dependent decay.
 
         out: (B, D) hidden state.
         state: dict with 'W' and 'r_prev', or None.
@@ -147,42 +175,44 @@ class HebbianBlock(nn.Module):
         """
         B, D = out.shape
         H, d = self.n_heads, self.head_dim
-        BH = B * H
 
-        if state is None:
-            W = out.new_zeros(BH, d, d)
-            r_prev = out.new_zeros(BH, d)
-        else:
+        v = self.proj_write(out).view(B, H, d)
+        gate = self.gate_proj(out).sigmoid().view(B, H, 1)
+        beta = self.beta_proj(out).sigmoid().view(B, H, 1)
+        decay = (-self.A_log.exp() * F.softplus(self.alpha_proj(out) + self.dt_bias)).exp().view(B, H, 1, 1)
+
+        v = v * beta
+        rk = out.view(B, H, d)
+
+        if state is not None:
             W = state["W"]
             r_prev = state["r_prev"]
+        else:
+            W = out.new_zeros(B, H, d, d)
+            r_prev = out.new_zeros(B, H, d)
 
-        gamma = torch.sigmoid(self.decay).repeat(B).view(BH, 1, 1)     # (BH, 1, 1)
-        v = self.proj_write(out).view(BH, d)
-        rk = out.view(BH, d)
+        # decay state, read, write
+        W = W * decay
+        read = (W * rk.unsqueeze(-1)).sum(-2)  # (B, H, d)
+        W = W + v.unsqueeze(-1) * r_prev.unsqueeze(-2)
 
-        write = torch.einsum("bi,bj->bij", v, r_prev)
-        read = torch.einsum("bij,bj->bi", W, rk)
-        W = gamma * W + write
+        # output gate
+        read = read * gate
+        read = self.out_proj(read.reshape(B, D))
 
-        alpha = self.log_alpha.exp().repeat(B).view(BH, 1)              # (BH, 1)
-        read = (alpha * read).view(B, D)
-        augmented = out + self.proj_read(read)
-
-        new_state = {"W": W, "r_prev": rk}
-        return augmented, new_state
+        return out + read, {"W": W, "r_prev": rk}
 
 
 class DeltaHebbianBlock(nn.Module):
-    """Block-diagonal delta rule memory with scalar decay.
+    """Block-diagonal delta rule memory with data-dependent decay and output gate.
 
-    Same as HebbianBlock but with error-corrective writes:
-    W_t = γ · W_{t-1} + (v_t - W_{t-1} · wk_t) ⊗ wk_t
-
-    The delta rule only writes what the memory doesn't already know.
-    Chunkwise parallel for training, recurrent for inference.
+    Token shift: write key is previous token, read key is current.
+    No Q/K projections — raw input (normalized) is the key.
+    Delta rule: W_t = e^g · W_{t-1} + β(v - W·wk)·wk^T
+    Output: norm(read) * silu(gate)
     """
 
-    def __init__(self, d_model: int, head_dim: int = 256, chunk_size: int = 64, memory_alpha: float = 0.03):
+    def __init__(self, d_model: int, head_dim: int = 128, chunk_size: int = 64):
         super().__init__()
         assert d_model % head_dim == 0
         self.d_model = d_model
@@ -191,9 +221,20 @@ class DeltaHebbianBlock(nn.Module):
         self.chunk_size = chunk_size
 
         self.proj_write = nn.Linear(d_model, d_model, bias=False)
-        self.proj_read = nn.Linear(d_model, d_model, bias=False)
-        self.decay = nn.Parameter(torch.full((self.n_heads,), 4.6))  # σ(4.6) ≈ 0.99
-        self.log_alpha = nn.Parameter(torch.full((self.n_heads,), memory_alpha).log())
+        self.gate_proj = nn.Linear(d_model, self.n_heads, bias=False)
+        self.out_proj = nn.Linear(d_model, d_model, bias=False)
+
+        # write gate
+        self.beta_proj = nn.Linear(d_model, self.n_heads, bias=False)
+
+        # data-dependent decay (Mamba-style init)
+        self.alpha_proj = nn.Linear(d_model, self.n_heads, bias=False)
+        dt = torch.empty(self.n_heads).uniform_(0, 1) * (torch.tensor(0.1).log() - torch.tensor(0.001).log()) + torch.tensor(0.001).log()
+        dt = dt.exp()
+        self.dt_bias = nn.Parameter(dt + torch.log(-torch.expm1(-dt)))
+        self.dt_bias._no_weight_decay = True
+        self.A_log = nn.Parameter(torch.empty(self.n_heads).uniform_(0, 16).log())
+        self.A_log._no_weight_decay = True
 
         # static masks
         C = chunk_size
@@ -201,7 +242,7 @@ class DeltaHebbianBlock(nn.Module):
         self.register_buffer("eye_C", torch.eye(C), persistent=False)
 
     def forward(self, out):
-        """Chunkwise parallel delta rule.
+        """Chunkwise parallel delta rule with data-dependent decay.
 
         out: (B, T, D).
         returns: (B, T, D) with memory reads added.
@@ -210,103 +251,112 @@ class DeltaHebbianBlock(nn.Module):
         H, d, C = self.n_heads, self.head_dim, self.chunk_size
         x = out.float()
 
-        gamma = torch.sigmoid(self.decay)         # (H,)
-        log_gamma = gamma.log()                    # (H,)
+        # projections — token shift for write key, normalize keys
+        v = self.proj_write(x).view(B, T, H, d)
+        gate = self.gate_proj(x).sigmoid().view(B, T, H, 1)
+        beta = self.beta_proj(x).sigmoid()
+        decay = -self.A_log.exp().view(1, 1, H) * F.softplus(self.alpha_proj(x) + self.dt_bias)
 
-        # -- projections: normalize keys, then shift for write key --
-        v = self.proj_write(x).view(B, T, H, d).transpose(1, 2)       # (B, H, T, d)
-        rk = F.normalize(x.view(B, T, H, d), dim=-1).transpose(1, 2)  # (B, H, T, d)
-        wk = F.pad(rk[:, :, :-1], (0, 0, 1, 0))                      # (B, H, T, d)
+        rk = F.normalize(x.view(B, T, H, d), dim=-1)
+        wk = F.pad(rk[:, :-1], (0, 0, 0, 0, 1, 0))  # shift along T dim
 
-        # -- flatten B*H for batched matmuls --
-        BH = B * H
-        gamma_bh = gamma.repeat(B)                                     # (BH,)
-        log_gamma_bh = log_gamma.repeat(B)                             # (BH,)
-        v = v.reshape(BH, T, d)
-        rk = rk.reshape(BH, T, d)
-        wk = wk.reshape(BH, T, d)
+        # transpose to (B, H, T, d)
+        rk, wk, v = [t.transpose(1, 2).float() for t in (rk, wk, v)]
 
-        # -- pad to chunk boundary --
+        # scale v and wk by beta
+        v = v * beta.transpose(1, 2).unsqueeze(-1)
+        wk_beta = wk * beta.transpose(1, 2).unsqueeze(-1)
+
+        # pad to chunk boundary
         pad = (C - (T % C)) % C
         if pad > 0:
             rk = F.pad(rk, (0, 0, 0, pad))
             wk = F.pad(wk, (0, 0, 0, pad))
             v = F.pad(v, (0, 0, 0, pad))
+            wk_beta = F.pad(wk_beta, (0, 0, 0, pad))
+            decay = F.pad(decay, (0, 0, 0, pad))
 
-        T_pad = rk.shape[1]
+        T_pad = rk.shape[2]
         N = T_pad // C
 
-        # -- reshape into chunks: (BH, N, C, d) --
-        rk = rk.view(BH, N, C, d)
-        wk = wk.view(BH, N, C, d)
-        v = v.view(BH, N, C, d)
+        # reshape into chunks: (B, H, N, C, d)
+        rk = rk.view(B, H, N, C, d)
+        wk = wk.view(B, H, N, C, d)
+        v = v.view(B, H, N, C, d)
+        wk_beta = wk_beta.view(B, H, N, C, d)
+        decay = decay.transpose(1, 2).view(B, H, N, C)
 
-        # -- decay mask: γ^(i-j) lower triangular, same for all chunks --
-        p = torch.arange(C, device=out.device)
-        diffs = (p[:, None] - p[None, :]).clamp(min=0).float()
-        L = torch.exp(diffs * log_gamma_bh[:, None, None]).tril()      # (BH, C, C)
+        # cumulative decay within each chunk
+        decay = decay.cumsum(-1)
+        decay_exp = decay.unsqueeze(-1).exp()
 
-        # -- WY correction: solve (I + A)x = b --
-        A = -(wk @ wk.transpose(-1, -2) * L[:, None]).masked_fill(self.causal_mask, 0)
+        # intra-chunk causal decay mask
+        L_mask = (decay.unsqueeze(-1) - decay.unsqueeze(-2)).tril().exp().tril()
+
+        # WY correction
+        causal_upper = torch.triu(torch.ones(C, C, device=x.device, dtype=torch.bool), diagonal=0)
+        A = -(wk_beta @ wk.transpose(-1, -2) * L_mask).masked_fill(causal_upper, 0)
         A = A.clone()
         for i in range(1, C):
-            A[..., i, :i] = A[..., i, :i].clone() + (
-                A[..., i, :i].clone().unsqueeze(-1) * A[..., :i, :i].clone()
-            ).sum(-2)
-        A = A + self.eye_C
+            A[..., i, :i] = A[..., i, :i].clone() + (A[..., i, :i].clone().unsqueeze(-1) * A[..., :i, :i].clone()).sum(-2)
+        A = A + torch.eye(C, device=x.device)
 
-        # -- precompute per-position decay weights --
-        gp = gamma_bh[:, None, None] ** p[None, :, None]              # (BH, C, 1): γ^0, γ^1, ..., γ^(C-1)
-        gp_tail = gamma_bh[:, None, None] ** (C - 1 - p)[None, :, None]  # (BH, C, 1): γ^(C-1), ..., γ^0
-        gamma_C = gamma_bh[:, None, None] ** C                        # (BH, 1, 1)
+        v = A @ v
+        wk_cumdecay = A @ (wk_beta * decay_exp)
 
-        intra = (rk @ wk.transpose(-1, -2) * L[:, None]).masked_fill(self.causal_mask, 0)
-        rk_g = rk * gp[:, None]                                       # (BH, N, C, d)
-        wk_g = (wk * gp_tail[:, None]).transpose(-1, -2)              # (BH, N, d, C)
-
-        # -- chunk-by-chunk state propagation --
-        S = x.new_zeros(BH, d, d)
-        o = x.new_zeros(BH, N, C, d)
+        # chunk-by-chunk state propagation
+        S = x.new_zeros(B, H, d, d)
+        o = torch.zeros_like(v)
+        causal_mask = torch.triu(torch.ones(C, C, device=x.device, dtype=torch.bool), diagonal=1)
 
         for i in range(N):
-            v_corr = A[:, i] @ v[:, i]
-            wk_corr = A[:, i] @ (wk[:, i] * gp[:, None, 0])
-            v_new = v_corr - wk_corr @ S
-            o[:, i] = rk_g[:, i] @ S + intra[:, i] @ v_new
-            S = gamma_C * S + wk_g[:, i] @ v_new
+            rk_i, wk_i, v_i = rk[:, :, i], wk[:, :, i], v[:, :, i]
+            attn = (rk_i @ wk_i.transpose(-1, -2) * L_mask[:, :, i]).masked_fill(causal_mask, 0)
+            v_new = v_i - wk_cumdecay[:, :, i] @ S
+            o[:, :, i] = (rk_i * decay[:, :, i, :, None].exp()) @ S + attn @ v_new
+            decay_weights = (decay[:, :, i, -1, None] - decay[:, :, i]).exp().unsqueeze(-1)
+            S = S * decay[:, :, i, -1, None, None].exp() + (wk_i * decay_weights).transpose(-1, -2) @ v_new
 
-        # -- output --
-        alpha = self.log_alpha.exp().view(1, H, 1, 1)
-        o = o.view(B, H, T_pad, d)
-        o = (alpha * o).transpose(1, 2).reshape(B, T_pad, D)[:, :T]
-        return out + self.proj_read(o).to(out.dtype)
+        # output gate + projection
+        o = o.view(B, H, T_pad, d).transpose(1, 2)[:, :T]  # (B, T, H, d)
+        o = o * gate  # per-head gating
+        return out + self.out_proj(o.reshape(B, T, D)).to(out.dtype)
 
     def step(self, out, state=None):
-        """Sequential recurrence: W = γW + (v - W·wk)⊗wk, read = W·rk.
+        """Sequential recurrence with data-dependent decay and output gate.
 
         out: (B, D).
         returns: (B, D), new state.
         """
         B, D = out.shape
         H, d = self.n_heads, self.head_dim
-        BH = B * H
 
-        v = self.proj_write(out).view(BH, d)
-        rk = F.normalize(out.view(BH, d), dim=-1)
-        gamma = torch.sigmoid(self.decay).repeat(B).view(BH, 1, 1)
+        v = self.proj_write(out).view(B, H, d)
+        gate = self.gate_proj(out).sigmoid().view(B, H, 1)
+        beta = self.beta_proj(out).sigmoid().unsqueeze(-1)  # (B, H, 1)
+        decay = (-self.A_log.exp() * F.softplus(self.alpha_proj(out) + self.dt_bias)).exp().view(B, H, 1, 1)
+
+        rk = F.normalize(out.view(B, H, d), dim=-1)
 
         if state is not None:
-            W = state["W"].view(BH, d, d)
-            wk = state["wk"].view(BH, d)
+            W = state["W"]
+            wk = state["wk"]
         else:
-            W = out.new_zeros(BH, d, d)
-            wk = out.new_zeros(BH, d)
+            W = out.new_zeros(B, H, d, d)
+            wk = out.new_zeros(B, H, d)
 
-        W = gamma * W
-        read = (W @ rk.unsqueeze(-1)).squeeze(-1)
-        error = v - (W @ wk.unsqueeze(-1)).squeeze(-1)
-        W = W + error.unsqueeze(-1) @ wk.unsqueeze(-2)
+        # decay state
+        W = W * decay
 
-        alpha = self.log_alpha.exp().repeat(B).view(BH, 1)
-        read = (alpha * read).view(B, D)
-        return out + self.proj_read(read), {"W": W.view(B, H, d, d), "wk": rk.view(B, H, d)}
+        # delta rule write with previous key, scaled by beta
+        v_err = (v - (W * wk.unsqueeze(-1)).sum(-2)) * beta
+        W = W + wk.unsqueeze(-1) * v_err.unsqueeze(-2)
+
+        # read with current key
+        read = (W * rk.unsqueeze(-1)).sum(-2)  # (B, H, d)
+
+        # output gate
+        read = read * gate  # per-head gating
+        read = self.out_proj(read.reshape(B, D))
+
+        return out + read, {"W": W, "wk": rk}
