@@ -36,7 +36,7 @@ class HybridHebbianLayer(nn.Module):
         if mode == "delta":
             self.memory = DeltaHebbianBlock(
                 d_model=cfg.d_model,
-                head_dim=cfg.head_dim or cfg.d_model,
+                num_heads=cfg.delta_num_heads or 8,
                 chunk_size=cfg.chunk_size,
             )
         elif mode == "hebbian":
@@ -68,20 +68,13 @@ class HybridHebbianLayer(nn.Module):
         return x + out, {"conv": conv_st, "memory": mem_state}
 
 
-def _parse_layers(s):
-    """Parse comma-separated layer indices, e.g. '3,7' -> {3, 7}."""
-    if not s:
-        return set()
-    return {int(x) for x in s.split(",")}
-
-
 class DeltaHebbianConv(nn.Module):
     def __init__(self, cfg: ModelConfig):
         super().__init__()
         self.cfg = cfg
 
-        delta_set = _parse_layers(cfg.delta_layers)
-        no_mem_set = _parse_layers(cfg.no_memory_layers)
+        delta_set = set(cfg.delta_layers or [])
+        no_mem_set = set(cfg.no_memory_layers or [])
 
         layers = []
         for i in range(cfg.n_layers):

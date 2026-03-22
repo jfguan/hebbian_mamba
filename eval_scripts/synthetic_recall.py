@@ -166,7 +166,7 @@ class Layer(nn.Module):
         self.norm = nn.RMSNorm(d_model)
         self.mlp = GatedMLP(d_model, expand=expand)
         self.conv = CausalConv(d_inner, d_conv=d_conv)
-        self.memory = HebbianBlock(d_model, head_dim=d_model)
+        self.memory = HebbianBlock(d_model)
 
     def forward(self, x):
         normed = self.norm(x)

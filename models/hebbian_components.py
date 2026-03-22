@@ -63,18 +63,13 @@ class HebbianBlock(nn.Module):
     No key normalization — raw hidden states as keys.
     """
 
-    def __init__(self, d_model: int, chunk_size: int = 64, head_dim: int | None = None):
+    def __init__(self, d_model: int, chunk_size: int = 64, num_heads: int = 1):
         super().__init__()
+        assert d_model % num_heads == 0
         self.d_model = d_model
         self.chunk_size = chunk_size
-
-        if head_dim is not None:
-            assert d_model % head_dim == 0
-            self.head_dim = head_dim
-            self.n_heads = d_model // head_dim
-        else:
-            self.head_dim = d_model
-            self.n_heads = 1
+        self.n_heads = num_heads
+        self.head_dim = d_model // num_heads
 
         H = self.n_heads
         self.proj_write = nn.Linear(d_model, d_model, bias=False)
@@ -139,8 +134,8 @@ class HebbianBlock(nn.Module):
         decay = decay.cumsum(-1)
         decay_exp = decay.unsqueeze(-1).exp()
 
-        # intra-chunk causal decay mask
-        L_mask = (decay.unsqueeze(-1) - decay.unsqueeze(-2)).exp().tril()
+        # intra-chunk causal decay mask (tril before exp prevents upper triangle overflow)
+        L_mask = (decay.unsqueeze(-1) - decay.unsqueeze(-2)).tril().exp().tril()
 
         # causal mask: strictly lower triangular (read before write)
         causal = torch.triu(torch.ones(C, C, device=x.device, dtype=torch.bool), diagonal=0)
@@ -160,6 +155,8 @@ class HebbianBlock(nn.Module):
             # advance state
             decay_weights = (decay[:, :, i, -1, None] - decay[:, :, i]).exp().unsqueeze(-1)
             S = S * decay[:, :, i, -1, None, None].exp() + (wk_i * decay_weights).transpose(-1, -2) @ v_i
+            S_norm = S.norm(dim=(-2, -1), keepdim=True)
+            S = S * (S_norm.clamp(max=100.0) / S_norm.clamp(min=1e-6))
 
         # output gate + projection
         o = o.view(B, H, T_pad, d).transpose(1, 2)[:, :T]  # (B, T, H, d)
@@ -212,12 +209,12 @@ class DeltaHebbianBlock(nn.Module):
     Output: norm(read) * silu(gate)
     """
 
-    def __init__(self, d_model: int, head_dim: int = 128, chunk_size: int = 64):
+    def __init__(self, d_model: int, num_heads: int = 8, chunk_size: int = 64):
         super().__init__()
-        assert d_model % head_dim == 0
+        assert d_model % num_heads == 0
         self.d_model = d_model
-        self.head_dim = head_dim
-        self.n_heads = d_model // head_dim
+        self.n_heads = num_heads
+        self.head_dim = d_model // num_heads
         self.chunk_size = chunk_size
 
         self.proj_write = nn.Linear(d_model, d_model, bias=False)
@@ -316,6 +313,8 @@ class DeltaHebbianBlock(nn.Module):
             o[:, :, i] = (rk_i * decay[:, :, i, :, None].exp()) @ S + attn @ v_new
             decay_weights = (decay[:, :, i, -1, None] - decay[:, :, i]).exp().unsqueeze(-1)
             S = S * decay[:, :, i, -1, None, None].exp() + (wk_i * decay_weights).transpose(-1, -2) @ v_new
+            S_norm = S.norm(dim=(-2, -1), keepdim=True)
+            S = S * (S_norm.clamp(max=100.0) / S_norm.clamp(min=1e-6))
 
         # output gate + projection
         o = o.view(B, H, T_pad, d).transpose(1, 2)[:, :T]  # (B, T, H, d)

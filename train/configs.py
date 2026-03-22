@@ -26,15 +26,22 @@ class ModelConfig:
     vocab_size: int = 0  # set from dataset at runtime
 
     # Hebbian memory
-    memory_alpha: float | None = None
-    head_dim: int | None = None
+    num_heads: int | None = None  # memory heads (None or 1 = full D×D)
 
     # Delta Hebbian
-    delta_layers: str | None = None      # comma-separated layer indices, e.g. "6,7"
-    no_memory_layers: str | None = None  # layers with conv+MLP only, no memory
+    delta_layers: list[int] | None = None  # layer indices that use delta rule
+    delta_num_heads: int | None = None  # heads for delta layers (default: 8)
+    no_memory_layers: list[int] | None = None  # layers with conv+MLP only, no memory
 
-    # GDN
-    num_heads: int | None = None
+    def __post_init__(self):
+        # migrate old fields from checkpoints
+        for attr in ("head_dim", "delta_head_dim", "memory_alpha", "neg_eigenvalues"):
+            if hasattr(self, attr):
+                delattr(self, attr)
+        if isinstance(self.delta_layers, str):
+            self.delta_layers = [int(x) for x in self.delta_layers.split(",")]
+        if isinstance(self.no_memory_layers, str):
+            self.no_memory_layers = [int(x) for x in self.no_memory_layers.split(",")]
 
 
 @dataclass
@@ -62,7 +69,6 @@ HEBBIAN_18M = ModelConfig(
     expand=2,
     d_state=16,
     chunk_size=64,
-    memory_alpha=0.1,
 )
 
 
@@ -75,7 +81,6 @@ HEBBIAN_100M = ModelConfig(
     expand=2,
     d_state=16,
     chunk_size=64,
-    memory_alpha=0.1,
 )
 
 DELTA_HEBBIAN_18M = ModelConfig(
@@ -87,9 +92,8 @@ DELTA_HEBBIAN_18M = ModelConfig(
     expand=2,
     d_state=16,
     chunk_size=64,
-    memory_alpha=0.1,
-    head_dim=256,
-    delta_layers="6,7",
+    delta_num_heads=2,
+    delta_layers=[6, 7],
 )
 
 DELTA_HEBBIAN_100M = ModelConfig(
@@ -101,9 +105,8 @@ DELTA_HEBBIAN_100M = ModelConfig(
     expand=2,
     d_state=16,
     chunk_size=32,
-    memory_alpha=0.1,
-    head_dim=128,
-    delta_layers="0,1,2,3,4,5,6,7,8,9,10,11",
+    delta_num_heads=8,
+    delta_layers=list(range(12)),
 )
 
 HYBRID_100M = ModelConfig(
@@ -115,9 +118,9 @@ HYBRID_100M = ModelConfig(
     expand=2,
     d_state=16,
     chunk_size=64,
-    memory_alpha=0.1,
-    head_dim=128,
-    delta_layers="0,1,3,4,5,6,7,8,11",
+    num_heads=1,
+    delta_num_heads=8,
+    delta_layers=[0, 1, 2, 4, 5, 7, 8, 10, 11],  # regular hebbian at 2, 6, 10
 )
 
 GDN_18M = ModelConfig(
