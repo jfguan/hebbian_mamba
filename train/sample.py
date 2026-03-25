@@ -17,7 +17,7 @@ from train.run import sample
 
 
 PROMPTS = {
-    DatasetName.THE_STACK: 'def fizzbuzz(n):\n    """Print 1 to n; Fizz for multiples of 3, Buzz for 5, FizzBuzz for both."""\n',
+    DatasetName.THE_STACK: 'def fizzbuzz(n):\n    for i in range(1, n + 1):\n        if i % 3 == 0:\n            print("fizz")\n        elif i % 5 == 0:\n            print("buzz")\n        elif i % 15 == 0:\n            print(',
     DatasetName.PG19: "",
 }
 

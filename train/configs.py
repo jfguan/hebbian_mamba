@@ -237,5 +237,5 @@ TRAIN_STACK_100M = TrainConfig(
     grad_accum=1,
     eval_interval=1000,
     ckpt_interval=10000,
-    max_steps_per_run=48828,
+    max_steps_per_run=8828,  # 48828 = 100M tokens, adjusted for delta resume at 60K
 )
