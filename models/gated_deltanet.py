@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 
-from models.hebbian_components import CausalConv, GatedMLP
+from models.components import CausalConv, GatedMLP
 from train.configs import ModelConfig
 
 

@@ -20,16 +20,18 @@ from models import build_model
 import train.configs as C
 
 MODELS = {
-    "hebbian_18M": C.HEBBIAN_18M,
-    "delta_hebbian_18M": C.DELTA_HEBBIAN_18M,
-    "delta_hebbian_100M": C.DELTA_HEBBIAN_100M,
-    "dual_delta_18M": C.DUAL_DELTA_18M,
-    "dual_delta_100M": C.DUAL_DELTA_100M,
-    "swa_delta_18M": C.SWA_DELTA_18M,
-    "swa_delta_100M": C.SWA_DELTA_100M,
-    "mamba_18M": C.MAMBA_18M,
+    "delta_18M": C.DELTA_18M,
+    "delta_100M": C.DELTA_100M,
+    "hybrid_18M": C.HYBRID_18M,
+    "hybrid_100M": C.HYBRID_100M,
     "gdn_18M": C.GDN_18M,
     "gdn_100M": C.GDN_100M,
+    "gdn_ts_18M": C.GDN_TS_18M,
+    "gdn_ts_100M": C.GDN_TS_100M,
+    "transformer_18M": C.TRANSFORMER_18M,
+    "transformer_ts_18M": C.TRANSFORMER_TS_18M,
+    "gdn_ts_sg_18M": C.GDN_TS_SG_18M,
+    "gdn_nosilu_18M": C.GDN_NOSILU_18M,
 }
 
 TRAINS = {
@@ -140,6 +142,9 @@ def main():
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
 
+        if device == "mps" and step % 1000 == 0:
+            torch.mps.empty_cache()
+
         last_step = step == end_step
 
         # eval
@@ -164,9 +169,12 @@ def main():
             print("buzz")
         elif i % 15 == 0:
             print("""
-    print(
-        f"Sample:\n{sample(raw_model, dataset.encode, dataset.decode, device, prompt=prompt, n=300)}"
-    )
+    try:
+        print(
+            f"Sample:\n{sample(raw_model, dataset.encode, dataset.decode, device, prompt=prompt, n=300)}"
+        )
+    except NotImplementedError:
+        print("(sampling not supported for this model)")
 
 
 def parse_args():

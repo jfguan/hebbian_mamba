@@ -1,87 +1,49 @@
-# Linear Hebbian Models
+# Shifted Key Architectures
+For architectures that utilize query and key projections like transformer and Gated Delta Net, we can replace the projections by simply using the previous hidden state directly as both key and query. This saves ~12.5% to 25% of a layer's parameters depending on expand parameter for free, which can be reinvested in more layers.
 
-Hebbian linear models are a minimal yet extremely effective linear architecture for general modeling.
+For a 100M parameter model trained for 200M tokens on The Stack(Code), a shifted key Gated Delta Net has a training loss of 1.08, .04 nats better than versus Gated Delta Net(1.12). We further decrease loss with a hybrid of sliding window + gated delta net to 1.04.
 
-Hebbian linear versus baseline Mamba shows a modest improvement on pg19 prose (-0.1 loss), but a massive improvement (-0.9 loss) on the_stack code due to code's natural associative structure in variable assignments.
+Afterwards is some discussion on the purpose of convolution and memory blocks in the model.
 
-Since it's mostly full matmuls, it's also extremely fast with existing Flash Linear Attention kernels.
-
-It's similar Mamba and Gated Delta Net, but is extremely minimal - each layer is:
-4 token convolution -> MLP -> memory block
-
-The memory block which is an associative matrix - a fixed cost soft KV cache similar to Gated Delta Net but uses the full matrix instead of block diagonal with divided heads.
-
-There are a few very small but critical changes:
-1. The convolution + MLP is the main processor - the memory is additive with a residual skip.
-2. A token shift during memory write allows removing the QK projections.
-3. The memory matrix is not split into heads to effectively increase storage space.
-
-# Attention Basic Review (feel free to skip)
-The attention mechanism cost in the transformer is quadratic - longer sequences are much more costly, due to the QKV structure.
-
-In a simplified single layer text example with word tokens, we need to predict the blank:
+# Attention Basic Review + Shifted Key Trick
+In a simplified example with word tokens, we need to predict the blank:
 The dog barked. The man saw the dog ____?
 
-To predict what comes after 'dog', the model creates a Query vector (q). Every previous word has a Key vector (k) associated. The dot product of each Q and K tells us how related the two words are.
+Attention uses x_t (hidden state at position t) to generate the key k_t and value v_t vectors, one per previous token, where the key represents a word's "relevance", and value represents the word's "abstract meaning".
 
-For example, 'dog' is likely more related to the previous 'dog', 'barked' words, and less so to 'the' and 'saw'.
+0    x_1  x_2      x_3  x_4  x_5  x_6  x_7  x_8
+The  dog  barked.  The  man  saw  the  dog  ____?
+k_0  k_1  k_2      k_3  k_4  k_5  k_6  k_7  k_8
+v_0  v_1  v_2      v_3  v_4  v_5  v_6  v_7  v_8
 
-The Value vector (v) contains the contexualized meaning of the word - bark is an dog's action, not the bark of a tree for example.
+The model creates a query vector q_8 and the dot product q_8 · k_t tells us the relevance of previous token t. For example, `dog` and `barked` are more relevant than `The`.
 
-q*k tells us the relation strength, which we use to scale the influence of a previous word's v for our current prediction. The attention mechanism gives us the appropriate context for prediction.
-
-The main problem is with really long text, you need to compute Q*K for every word, and hence need to cache the KV values for every previous word to avoid recomputing them.
-
-This is really expensive, so people have tried many things like combining different attention types like sliding window (keep only last X tokens), strided(keep every Y tokens), with global to keep the cost down.
-
-A different research direction is linear models, which instead have a fixed cost regardless of sequence length. 
-
-# Linear Models Basic Review (feel free to skip)
-Many different linear architectures exist (Mamba 1/2/3, Gated Delta Net, Kimi Linear, etc.), the simplified problem is that the infinite series of Key and Value vectors of attention must be compressed into a fixed size matrix, let's just call M for memory.
-
-The original linear attention publishes the core insight:
-For each k,v vectors, take the outer product v⊗k or (v · k^T).
-Multiplying v⊗k by k again, we get v · (k^T @ k) = v · ‖k‖². You get v back.
-Essentially, storing kv together allows retrieving v with k. 
-
-After adding v⊗k to M, multiplying M by k retrieves v. M is your KV cache.
-However, M is fixed size, so continually adding v⊗k start to overlap. Instead of a clean v retrieval, you get a weighted combination of all v's in M, which could be useful.
-
-Every new token, we multiple M by decay (γ) so old keys fade and "make room" for new keys.
-
-# Linear Models Issues
-Fundementally, compared to full attention which retains all kv vectors crisply, linear attention compression can only approximate. The cost of faster speed is worse recall, which many hybrids like Jamba, Olmo, Kimi Linear mitigate by full attention layers only every few layers.
-
-# Linear Hebbian Token Shift
-The hebbian matrix is very similar to the GDN matrix, except it uses a new token shift Opus 4.6 discovered, reducing parameter cost 12.5% (expand 4) to 25% per layer (expand 2)
-
-Gated Delta Net creates the q/k/v vectors via projections for the memory matrix. However, during prediction, we're storing v⊗k, which is "symmetric". We're storing the key for the new predicted token with the "thinking state" together, which isn't very useful.
+The shifted key trick directly uses x_t (hidden state at position t) as the query and x_{t-1} as the key, so that the previous hidden state corresponds to what the model is thinking currently.
 
 In our example:
-The dog barked. The man saw the dog ____?
+state:   x_0  x_1  x_2     x_3  x_4  x_5  x_6  x_7
+         The  dog  barked. The  man  saw  the  dog  ____?
+keys:    0    x_0  x_1     x_2  x_3  x_4  x_5  x_6
+values:  v_0  v_1  v_2     v_3  v_4  v_5  v_6  v_7
 
-A symmetric memory matrix contains the key value pairs of:
-"dog": "thinking about dog"
-"barked": "thinking about barking"
 
-We need to predict "bark", so query vector learns to transform into something like "barked", retrieving the "bark thinking state" to predict "bark". A big responsibility of Q/K projections are spent breaking the symmetry, although they're more expressive as well.
+At x_7, the model is thinking about "dog" - because x_7 is similar to x_1, v_2 is weighted very high, which has the abstract concept of  "barked" and influences the model to predict "bark".
 
-The Hebbian token shift breaks the symmetry by uses the previous word directly as the key. The key value pairs look like:
+Basically, if your current token is `dog`, look back to what was predicted right after `dog`. While the bigram structure seems to only be able to encode neighboring tokens as related, adding a depth 4 conv before attention adds local information to the chain.
 
-"the": "thinking about dog"
-"dog": "thinking about barking"
+The idea is similar to RWKV-4's token lerp.
 
-To know what I should be thinking about now, just use the previous token as a primer.
-Predicting the final word, we use the previous token "dog" as the key, which last time was followed by the "thinking about barking" state.
+# Simplified Architectures - Sliding Window Attention and Gated Delta Net
+Applying the trick, we remove the Q/K projections from Sliding Window Attention and Gated Delta Net.
 
-This skips the Q and K projections which is 12.5% of the layer parameters at MLP expand factor of 4, or 25% at expand factor of 2.
+For Gated delta net, we also remove the convolution on the Value projection, and remove the per dimension output gate as well, opting for a simpler per head output gate.
 
-Similar models in literature include Mamba 3 with trapazoidal SSM, and RWKV-7's lerp token lerp.
+We make two types of layers in the same pattern:
+1. Convolution
+2. MLP
+3. Memory block
 
-# Linear Hebbian Residual Skip
-In this architecture, memory is not the primary mechanism, but instead an augmentation to the convolution+MLP.
-
-While Gated Delta Net's output which directly feeds into an MLP, the Linear Hebbian matrix adds a residual skip, so the convolution + MLP output can somewhat "ignore" the memory if desired. Furthermore, an alpha scalar controls memory influence "strength", which after training settles from .05 to .10. Despite only having a 10% influence per layer, across layers the nudges from memory influence the final prediction significantly.
+The memory block can either be Sliding Window Attention or Gated Delta Net.
 
 # Results
 ## 18M Scale Testing
@@ -92,26 +54,6 @@ We train a baselines Mamba and convolution models to compare against Linear Hebb
 We see that the convolution + MLP model performs .3 nats worse than Mamba, but Linear Hebbian performs almost ~.9 nats better than Mamba. 
 
 As we see on prose pg19, Linear Hebbian performs only ~.11 nats better, which makes sense, prose needs less recall.
-
-## Convolutions are mostly all you need
-The MambaOut paper showed for vision models, the SSM doesn't contribute much and just convolutions can approximate it. Similar results in language, where a big part is predicting from immediate local context, influenced by keywords farther in the past.
-
-Stacking 6 convolution + MLP layers with conv width of 4 tokens, you actually have a 4 + (4-1) * 5 = 19 nonlinear local token window to work with.
-If layer 1 has information on token t and past 3 tokens, layer 2 mixes t and past 6 tokens
-Layer 1: [t to t-3]
-Layer 2: [t to t-3, t-1 to t-4, t-2 to t-5, t-3 to t-6]
-...
-
-I suspect attention is overkill - perfect recall for filler words likely is clogging memory that need to be "forgotten" with tricks like attention sinks.
-
-However, a mechanism for long term recall is still needed, which the hebbian matrix fills.
-
-## Sanity Checks
-Let's first sanity check the hebbian matrix works. A synthetic task trains a small hebbian model to memorize key/value pairs and retrieve them, which it does. 
-
-After training, we can see the model has a natural memory capacity curve.
-
-We also freeze the memory matrix to see if it's critical - without it, performance drops dramatically.
 
 ## 100M Scale Testing
 Scaling up to 100M, again we show that hebbian maintains a sigifnicant nat improvement around ~.5 over baseline Mamba, theorized just due to larger state to store memory in.
@@ -125,6 +67,33 @@ In addition, we create a new layer type delta hebbian, which is just hebbian wit
 ## Generalization Testing
 To test that the architecture generalizes, we use Karpathy's nano-gpt setup, training a 124M model on fineweb-edu data for 10B tokens. With no tuning we see validation loss is ~.10 worse than the GPT-2.
 
+# Personal Thoughts
+
+## Convolutions are half of what you need
+The MambaOut paper and Canon layer paper showed for both language and vision models, the SSM block doesn't contribute much, most of the strength comes from just stacking convolutions. Why? Stacked convolutions provide the immediate local context. 
+
+Stacking 6 convolution + MLP layers with conv width of 4 tokens, you actually have a 4 + (4-1) * 5 = 19 nonlinear local token window to work with, which is quite a lot - maybe a full sentence.
+
+If layer 1 has information on token t and past 3 tokens, layer 2 mixes t and past 6 tokens
+Layer 1: [t to t-3]
+Layer 2: [t to t-3, t-1 to t-4, t-2 to t-5, t-3 to t-6]
+...
+
+However, we obviously need longer range memory, which is why the other half is "associative recall" - remembering things. Mamba's state and effective memory is quite small. This however doesn't get exposed on short context general english because it doens't stress associative recall, so it performs similarly to Gated Delta Net. However, on code, which is almost purely associative recall, Gated Delta Net performs much better.
+
+ While Mamba state updates are smarter, the small state fundementally cannot store as much information as full attention.
+
+
+# Linear Attention Basic Review
+Linear attention tries
+For each k,v vectors, take the outer product v⊗k or (v · k^T).
+Multiplying v⊗k by k again, we get v · (k^T @ k) = v · ‖k‖². You get v back.
+Essentially, storing kv together allows retrieving v with k. 
+
+After adding v⊗k to M, multiplying M by k retrieves v. M is your KV cache.
+However, M is fixed size, so continually adding v⊗k start to overlap. Instead of a clean v retrieval, you get a weighted combination of all v's in M, which could be useful.
+
+Every new token, we multiple M by some decay γ so old keys fade and "make room" for new keys.
 
 ## Full Attention is a tempting local minimum
 Many challengers to Tranformers have tried and "failed", but the bitter lesson points toward linear architectures:
