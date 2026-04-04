@@ -1,7 +1,7 @@
 data/pg19/
 data/the_stack/
 data/__pycache__/
-eval_results/
+eval_results/*.pt
 checkpoints/
 .DS_Store
 __pycache__/
