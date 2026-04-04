@@ -3,6 +3,7 @@ Surprisingly, we can remove the query and key projections in Gated Delta Net by 
 1. Current hidden state as the query vector
 2. Previous hidden state as the key vector
 
+TLDR:
 This results in both faster convergence, marginally better performance despite strictly fewer parameters, and saves ~12.5% to ~25% of a layer's parameters.
 
 For a ~100M parameter model trained for 300M tokens on coding samples(The Stack), a shifted key Gated Delta Net has a fitted training loss of 1.02 compared to 1.03 of a normal Gated Delta Net model.
@@ -10,22 +11,25 @@ For a ~100M parameter model trained for 300M tokens on coding samples(The Stack)
 We also show the same concept does not apply to softmax attention. Concept was discovered by Opus 4.6.
 The shift is similar to RWKV token lerp, but removes Q/K projections completely.
 
-# Attention Basic Review
+# Attention Quick Review
 Attention uses x_t (hidden state at position t) to generate the key k_t and value v_t vectors, one per previous token, as well as the current query vector q_t.
 
 In a simplified example with word tokens, we need to predict the blank:
-x_0  x_1  x_2      x_3  x_4  x_5  x_6  x_7
-The  dog  barked.  The  man  saw  the  dog  ____?
-q_0  q_1  q_2      q_3  q_4  q_5  q_6  q_7
-k_0  k_1  k_2      k_3  k_4  k_5  k_6  k_7
-v_0  v_1  v_2      v_3  v_4  v_5  v_6  v_7
+
+| | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | |
+|---|---|---|---|---|---|---|---|---|---|
+| **state** | x_0 | x_1 | x_2 | x_3 | x_4 | x_5 | x_6 | x_7 | |
+| **token** | The | dog | barked. | The | man | saw | the | dog | ____? |
+| **query** | q_0 | q_1 | q_2 | q_3 | q_4 | q_5 | q_6 | q_7 | |
+| **key** | k_0 | k_1 | k_2 | k_3 | k_4 | k_5 | k_6 | k_7 | |
+| **value** | v_0 | v_1 | v_2 | v_3 | v_4 | v_5 | v_6 | v_7 | |
 
 Key vectors encode for a token "what am I", value vectors encode for a token "what I mean in context", and the query vector encodes for the current prediction, "what other tokens are relevant?"
 
 In our example, using query vector q_7, q_7 · k_t tells us the relevance of any previous token t. For example, `dog` and `barked` are more relevant than `The`.
 After calculating relevance scores, normalized by softmax, we get a weighted average of all the previous value vectors that inform our final prediction.
 
-# Linear Attention Basic Review
+# Linear Attention Quick Review
 Because attention requires keeping all previous k, v vectors, cost grows with sequence length. Linear attention circumvents this with a fixed-size state instead.
 
 pros: no growing memory/compute costs.
@@ -48,10 +52,13 @@ Normally, the q, k vectors are generated from learned q, k projections, but the 
 2. x_t as the query vector. Due to the key shift, querying the memory matrix with x_t returns "for positions similar to x_t, what came after?"
 
 Going back to our example:
-x_0  x_1  x_2      x_3  x_4  x_5  x_6  x_7
-The  dog  barked.  The  man  saw  the  dog  ____?
-0    x_0  x_1      x_2  x_3  x_4  x_5  x_6
-v_0  v_1  v_2      v_3  v_4  v_5  v_6  v_7
+
+| | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | |
+|---|---|---|---|---|---|---|---|---|---|
+| **state** | x_0 | x_1 | x_2 | x_3 | x_4 | x_5 | x_6 | x_7 | |
+| **token** | The | dog | barked. | The | man | saw | the | dog | ____? |
+| **key** | 0 | x_0 | x_1 | x_2 | x_3 | x_4 | x_5 | x_6 | |
+| **value** | v_0 | v_1 | v_2 | v_3 | v_4 | v_5 | v_6 | v_7 | |
 
 In terms of key/value pairs:
 The -> dog
