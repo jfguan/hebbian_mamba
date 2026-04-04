@@ -8,18 +8,25 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-OUT_PATH = "eval_results/loss_curves.png"
-MODELS = [
-    ("histories/gdn_100M_the_stack.jsonl", "GDN"),
-    ("histories/gdn_ts_100M_the_stack.jsonl", "GDN Token Shift"),
-    # ("histories/delta_100M_the_stack.jsonl", "Delta"),
-    ("histories/hybrid_100M_the_stack.jsonl", "Hybrid"),
-]
+# OUT_PATH = "eval_results/loss_curves_gdn_18M.png"
 # MODELS = [
-#     ("histories/transformer_18M_the_stack.jsonl", "Transformer"),
-#     ("histories/transformer_ts_18M_the_stack.jsonl", "Transformer Token Shift"),
+#     ("histories/gdn_18M_the_stack.jsonl", "Gated Delta Net 17.9M"),
+#     ("histories/gdn_ts_18M_the_stack.jsonl", "Shifted Key Gated Delta Net 14.7M"),
 # ]
-COLORS = ["#1f77b4", "#e377c2", "#ff7f0e", "#2ca02c"]
+
+OUT_PATH = "eval_results/loss_curves_gdn_100M.png"
+MODELS = [
+    ("histories/gdn_100M_the_stack.jsonl", "Gated Delta Net 105.2M"),
+    ("histories/gdn_ts_100M_the_stack.jsonl", "Shifted Key Gated Delta Net 86.2M"),
+]
+
+# OUT_PATH = "eval_results/loss_curves_transformer_18M.png"
+# MODELS = [
+#     ("histories/transformer_18M_the_stack.jsonl", "Transformer 21.5M"),
+#     ("histories/transformer_ts_18M_the_stack.jsonl", "Shifted Key Transformer 17.3M"),
+# ]
+
+COLORS = ["#d62728", "#1f77b4"]
 
 
 def main():
@@ -47,9 +54,13 @@ def main():
             label=f"{name} (slope={slope:.2f}, loss={latest_loss:.2f})",
         )
 
-    ax.set(xlabel="Tokens (M)", ylabel="Train Loss (nats)", title="Training Loss")
+    ax.set(
+        xlabel="Tokens (M)",
+        ylabel="Train Loss (nats)",
+        title="Training Loss (The Stack)",
+    )
     ax.set_ylim(0.9, 2.75)
-    # ax.set_ylim(0.9, 10)
+    # ax.set_ylim(0.9, 6)
     ax.legend(fontsize=10)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
@@ -58,7 +69,7 @@ def main():
     print(f"saved {OUT_PATH}")
 
 
-SMOOTH_WINDOW = 750
+SMOOTH_WINDOW = 500
 
 
 def load_history(path):

@@ -1,117 +1,102 @@
-# Shifted Key Architectures
-For architectures that utilize query and key projections like transformer and Gated Delta Net, we can replace the projections by simply using the previous hidden state directly as both key and query. This saves ~12.5% to 25% of a layer's parameters depending on expand parameter for free, which can be reinvested in more layers.
+# Removing Q/K Projections for Gated Delta Net Slighly Improves Performance at ~15% Less Parameters
+Suprisingly, we can remove the query and key projections in Gated Delta Net by directly using:
 
-For a 100M parameter model trained for 200M tokens on The Stack(Code), a shifted key Gated Delta Net has a training loss of 1.08, .04 nats better than versus Gated Delta Net(1.12). We further decrease loss with a hybrid of sliding window + gated delta net to 1.04.
+1. Current hidden state as the query vector
+2. Previous hidden state as the key vector
 
-Afterwards is some discussion on the purpose of convolution and memory blocks in the model.
+This results in both faster convergence, marginally better performance despite strictly less parameters, and saves ~12.5% to ~25% of a layer's parameters.
 
-# Attention Basic Review + Shifted Key Trick
+For a ~100M parameter model trained for 300M tokens on The Stack(Code), a shifted key Gated Delta Net has a fitted training loss of 1.02 compared to 1.03 of a normal Gated Delta net model.
+The shift is similar to RWKV token lerp, but removes Q/K projections completely.
+
+We also show the same concept does not apply to softmax attention. Mechanism discovered by Opus 4.6.
+
+# Attention Basic Review
+Attention uses x_t (hidden state at position t) to generate the key k_t and value v_t vectors, one per previous token, as well as the current query vector q_t.
+
 In a simplified example with word tokens, we need to predict the blank:
-The dog barked. The man saw the dog ____?
-
-Attention uses x_t (hidden state at position t) to generate the key k_t and value v_t vectors, one per previous token, where the key represents a word's "relevance", and value represents the word's "abstract meaning".
-
 0    x_1  x_2      x_3  x_4  x_5  x_6  x_7  x_8
 The  dog  barked.  The  man  saw  the  dog  ____?
+q_0  q_1  q_2      q_3  q_4  q_5  q_6  q_7  q_8
 k_0  k_1  k_2      k_3  k_4  k_5  k_6  k_7  k_8
 v_0  v_1  v_2      v_3  v_4  v_5  v_6  v_7  v_8
 
-The model creates a query vector q_8 and the dot product q_8 · k_t tells us the relevance of previous token t. For example, `dog` and `barked` are more relevant than `The`.
+Key vectors encode what for a token, "what am I", value vectors encode for a token "what I mean in context", and the query vector encodes for my current prediction, what other tokens are relevant to me?
 
-The shifted key trick directly uses x_t (hidden state at position t) as the query and x_{t-1} as the key, so that the previous hidden state corresponds to what the model is thinking currently.
-
-In our example:
-state:   x_0  x_1  x_2     x_3  x_4  x_5  x_6  x_7
-         The  dog  barked. The  man  saw  the  dog  ____?
-keys:    0    x_0  x_1     x_2  x_3  x_4  x_5  x_6
-values:  v_0  v_1  v_2     v_3  v_4  v_5  v_6  v_7
-
-
-At x_7, the model is thinking about "dog" - because x_7 is similar to x_1, v_2 is weighted very high, which has the abstract concept of  "barked" and influences the model to predict "bark".
-
-Basically, if your current token is `dog`, look back to what was predicted right after `dog`. While the bigram structure seems to only be able to encode neighboring tokens as related, adding a depth 4 conv before attention adds local information to the chain.
-
-The idea is similar to RWKV-4's token lerp.
-
-# Simplified Architectures - Sliding Window Attention and Gated Delta Net
-Applying the trick, we remove the Q/K projections from Sliding Window Attention and Gated Delta Net.
-
-For Gated delta net, we also remove the convolution on the Value projection, and remove the per dimension output gate as well, opting for a simpler per head output gate.
-
-We make two types of layers in the same pattern:
-1. Convolution
-2. MLP
-3. Memory block
-
-The memory block can either be Sliding Window Attention or Gated Delta Net.
-
-# Results
-## 18M Scale Testing
-Disclaimer - all models are heavily undertrained, and limited windows, so noise variation could be significant. However, the nat gaps seem quite large and are at least indicative.
-
-We train a baselines Mamba and convolution models to compare against Linear Hebbian on a coding dataset, The Stack. Coding datasets help exaggerate recall differences since code is high density variable and function associations.
-
-We see that the convolution + MLP model performs .3 nats worse than Mamba, but Linear Hebbian performs almost ~.9 nats better than Mamba. 
-
-As we see on prose pg19, Linear Hebbian performs only ~.11 nats better, which makes sense, prose needs less recall.
-
-## 100M Scale Testing
-Scaling up to 100M, again we show that hebbian maintains a sigifnicant nat improvement around ~.5 over baseline Mamba, theorized just due to larger state to store memory in.
-
-In addition, we create a new layer type delta hebbian, which is just hebbian with the delta rule. It's very close to Gated Delta Net, and splits the matrix block diagonally with heads for hardware efficiency. Placing a few delta hebbian layers at the end of the model further improves performance, theorizing they play a role similar to full attention layers in hybrid models like Olmo. The delta rule allows erasing values before rewriting, allowing cleaner key writes as well as preserving keys indefinitely for critical long term keywords.
-
-## TODO - train multihead attention and GDN as well
-
-## TODO
-
-## Generalization Testing
-To test that the architecture generalizes, we use Karpathy's nano-gpt setup, training a 124M model on fineweb-edu data for 10B tokens. With no tuning we see validation loss is ~.10 worse than the GPT-2.
-
-# Personal Thoughts
-
-## Convolutions are half of what you need
-The MambaOut paper and Canon layer paper showed for both language and vision models, the SSM block doesn't contribute much, most of the strength comes from just stacking convolutions. Why? Stacked convolutions provide the immediate local context. 
-
-Stacking 6 convolution + MLP layers with conv width of 4 tokens, you actually have a 4 + (4-1) * 5 = 19 nonlinear local token window to work with, which is quite a lot - maybe a full sentence.
-
-If layer 1 has information on token t and past 3 tokens, layer 2 mixes t and past 6 tokens
-Layer 1: [t to t-3]
-Layer 2: [t to t-3, t-1 to t-4, t-2 to t-5, t-3 to t-6]
-...
-
-However, we obviously need longer range memory, which is why the other half is "associative recall" - remembering things. Mamba's state and effective memory is quite small. This however doesn't get exposed on short context general english because it doens't stress associative recall, so it performs similarly to Gated Delta Net. However, on code, which is almost purely associative recall, Gated Delta Net performs much better.
-
- While Mamba state updates are smarter, the small state fundementally cannot store as much information as full attention.
-
+In our example, our query vector q_8, and the dot product q_8 · k_t tells us the relevance of previous token t. For example, `dog` and `barked` are more relevant than `The`.
+After calculating relevance scores, normalized by softmax, we get a weighed average of all the previous value vectors that inform our final prediction.
 
 # Linear Attention Basic Review
-Linear attention tries
-For each k,v vectors, take the outer product v⊗k or (v · k^T).
-Multiplying v⊗k by k again, we get v · (k^T @ k) = v · ‖k‖². You get v back.
-Essentially, storing kv together allows retrieving v with k. 
+Because attention requires all previous K, V vectors, cost grows with sequence length. Linear attention use a fixed state size to represent the past K,V vectors.
 
-After adding v⊗k to M, multiplying M by k retrieves v. M is your KV cache.
-However, M is fixed size, so continually adding v⊗k start to overlap. Instead of a clean v retrieval, you get a weighted combination of all v's in M, which could be useful.
+Pros: no growing memory/compute costs.
+Cons: no free lunch - compression is inherently lossy and recall is worse.
 
-Every new token, we multiple M by some decay γ so old keys fade and "make room" for new keys.
+Explanation:
+With two k,v vectors, first take the outer product v⊗k, written also as (v · k^T).
+Afterwards, multiplying v⊗k by k again, we get v · (k^T @ k) = v · ‖k‖². You get a scaled v back.
 
-## Full Attention is a tempting local minimum
-Many challengers to Tranformers have tried and "failed", but the bitter lesson points toward linear architectures:
-1. Learned designs beat human designed at scale. Attention sinks, strided, sliding, etc. are designed compression to managed cost. For strided attention, why every 4th token? For sliding window, what if the important token slides right outside the window?  Global layers plug some gaps but you can tell the models are referencing something they shouldn't be.
-2. Linear complexity best utilizes compute. We're already hitting limits at 1M tokens, and image/video scales even worse. Hybrid models that patch the recall issue with full attention is still a smaller quadratic.
-1. The whole point of deep learning is learned approximations eventually approach exact at scale.
+Instead of storing each k, v separately we store the combined v⊗k in a fixed size matrix M by doing M += v⊗k. To get back v, just do M * k.  M as a lossy fixed size KV cache, which we continually add new v⊗k
 
-Emphasis on scale, we can't see out of the local minimum that recall might not be as imporant as we think it is.
+However, because M is fixed size, eventually all the keys start to overlap, so if two keys were similar, querying will get return a combination of the two corresponding values.
 
-It’s quite hard to invest in linear architectures when all benchmarks suggests they are strictly worse, but benchmark design is biased:
-1. Benchmarks effectively disallow rereading, a very unnatural test setting that biases hard for recall. 
-Full attention remembers the question/context/answer choices clearly. Great!
-Linear attnetion forgets, but humans don't read once then shoot from the hip - we re-read whatever we need.
-2. Short context testing uses full attention, but real architectures use sliding window.
-3. Recall and needle in a haystack are misleading metrics. Perfect recall can be mitigated if the model can externalize thought storage via notes.
+In practice various gating and decay mechanisms mitigate the key collision/capacity issues.
 
-A fair comparison requires agentic models that actionably re-request information, like how humans can ask “what was the question again?”. Unfortunately, agentic scale requires a lot of investment.
+# Shifted Key Trick
+Normally, the q, k vectors are generated from learned q, k projections, but the shifted key trick skips the learned projections entirely. Instead we directly use (with x_t is the hidden state at position t):
+1. x_{t-1} as the key vector k_t, for v_t. This binds the previous state to the current value.
+2. x_t as the query vector. Due to the key shift, querying the memory matrix with x_t returns "for positions similar to x_t, what came after?"
 
-Fundementally, recall and runtime complexity are in tension. Good recall naturally requires more state, but more state is costly.
+Going back to our example:
+                                            x_8
+The  dog  barked.  The  man  saw  the  dog  ____?
+0    0    x_1      x_2  x_3  x_4  x_5  x_6  x_7
+v_0  v_1  v_2      v_3  v_4  v_5  v_6  v_7  v_8
 
+In terms of key/value pairs:
+The -> dog
+dog -> barked
+barked. -> The
+The -> man
+man -> saw
+...
 
+In predict the blank, we just predicted that token "dog" so our hidden state x_8 is similar x_1, which strengthen's the v_2 representation for "barked".
+
+This hard prior fixes the symmetric memory matrix issue of linear attention normally solved by learned Q/K projections. Because the hidden state x_t is input to both the k_t, v_t vectors, the symmetric key value pairs don't encode what comes next: e.g. the key might represent "I am the dog token" and value might represent "meaning of dog". In our example prediction, without the shifted key, our current hidden state is "dog", so when we query the matrix, we get "meaning of dog" back, when we actually wanted "meaning of bark". 
+
+This symmetry issue doesn't apply to softmax attention, which retains all previous keys to query against.
+
+We can also think of the token shift as copy paste - after I see x, think of y whcih does seem extremely limiting - associations are restricted to neighboring tokens.
+However,  empirically at 100M parameter sizes it still seems to work, perhaps suggesting that for linear attention models, the q, k projections are mostly about:
+1. Learning to break the symmetry in the memory matrix
+2. Forming good orthogonal keys to fully utilize the keyspace
+3. Associating abstract concepts rather than raw words.
+
+It seems that the raw hidden states serve these responsiblities well enough or better.
+
+# Experiments
+Disclaimer - all models are decently undertrained. Curves are fit on data on last 80% of training to avoid too much early training influence. Sequence length is 2048, vocab of 1024.
+
+## 18M Scale Testing
+We train a baseline 17.9M parameter Gated Delta Net and 14.7M Shifted Key Gated Delta Net models for 30M tokens, batch size 4, sequence length 2048 on coding tokens (The Stack). Shifted key GDN is the same, just removing the Q, K projections.
+
+for the training losses with smoothed data points, and see the token shift performs better despite having less parameters and expressiveness.
+
+However for transformers, the shifted key transformer performs worse. This suggests while softmax attention and linear attention have the same root, they do behave differently. While both are doing pattern matching, perhaps softmax attention does it through querying/recalling exact past keys, while linear attention does a fuzzier general pattern matching.
+
+## 100M Scale Testing
+We scale up to a 105M for Gated Delta Net and 86.2M Shifted Key Gated Delta Net, trained for 300M tokens, batch size 1.
+
+The shifted key model maintains a small lead despite ~15% less parameters, as well as faster convergence due to not needing to learn QK projections.
+
+Lastly, the shifted key model seems to produce "better" keys across it's layers:
+
+1. Effective rank - how many different keys are being stored.
+2. Avg Pairwise Cosine - how close and "jumbled" keys are for clean retrieval
+3. Condition number - how well the keys as a whole use the dimensional "storage" space
+
+The shifted key model performs better all metrics except 3. at layer 0 which is an artificat of addng a padding key since at position 0 there's no previous hidden state to use as the key.
+
+# Conclusions
+I'm not exactly sure why this works. While it seems to make intuitive sense that associations can be chained together to form memory, it is confusing that restriction of only associating directly neighboring tokens doesn't impact performance more. Perhaps this is too restrictive at scale, although it does seem to demonstrate linear attention related models are genuinely differnt in some way.
